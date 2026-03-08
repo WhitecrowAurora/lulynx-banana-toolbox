@@ -120,6 +120,12 @@ Notes / 说明：
 - The `image` field is optional and is used for image-to-image generation.
 - `image` 字段是可选的，用于图生图场景。
 
+## Acknowledgements / 鸣谢
+
+Special thanks to Longyin and Lianz for testing the app and helping improve stability during development.
+
+特别感谢 我只想听龙吟 和 Lianz 在开发过程中参与测试，并帮助改进稳定性。
+
 ## License / 许可证
 
 GPL-3.0
