@@ -11,6 +11,8 @@ class ChatMessageCard extends StatelessWidget {
     required this.retryLabel,
     required this.onCopyPrompt,
     required this.onRetry,
+    this.promptWidget,
+    this.isHighlighted = false,
     this.saveImageLabel,
     this.reuseReferencesLabel,
     this.reuseGeneratedImageLabel,
@@ -29,6 +31,8 @@ class ChatMessageCard extends StatelessWidget {
   final String durationText;
   final String copyPromptLabel;
   final String retryLabel;
+  final Widget? promptWidget;
+  final bool isHighlighted;
   final String? saveImageLabel;
   final String? reuseReferencesLabel;
   final String? reuseGeneratedImageLabel;
@@ -44,56 +48,82 @@ class ChatMessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(prompt),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                Chip(label: Text(statusText), visualDensity: VisualDensity.compact),
-                Chip(label: Text(timeText), visualDensity: VisualDensity.compact),
-                Chip(label: Text(durationText), visualDensity: VisualDensity.compact),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                TextButton(onPressed: onCopyPrompt, child: Text(copyPromptLabel)),
-                if (onSaveImage != null && (saveImageLabel ?? '').isNotEmpty)
-                  TextButton(onPressed: onSaveImage, child: Text(saveImageLabel!)),
-                TextButton(onPressed: onRetry, child: Text(retryLabel)),
-                if (onReuseReferences != null && (reuseReferencesLabel ?? '').isNotEmpty)
-                  TextButton(
-                    onPressed: onReuseReferences,
-                    child: Text(reuseReferencesLabel!),
+    final highlightColor =
+        Theme.of(context).colorScheme.secondary.withOpacity(0.24);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      child: Card(
+        color: isHighlighted ? highlightColor : null,
+        margin: const EdgeInsets.only(bottom: 10),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              promptWidget ?? Text(prompt),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  Chip(
+                    label: Text(statusText),
+                    visualDensity: VisualDensity.compact,
                   ),
-                if (onReuseGeneratedImage != null &&
-                    (reuseGeneratedImageLabel ?? '').isNotEmpty)
-                  TextButton(
-                    onPressed: onReuseGeneratedImage,
-                    child: Text(reuseGeneratedImageLabel!),
+                  Chip(
+                    label: Text(timeText),
+                    visualDensity: VisualDensity.compact,
                   ),
-                if (onCopyError != null && (copyErrorLabel ?? '').isNotEmpty)
-                  TextButton(onPressed: onCopyError, child: Text(copyErrorLabel!)),
+                  Chip(
+                    label: Text(durationText),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  TextButton(
+                    onPressed: onCopyPrompt,
+                    child: Text(copyPromptLabel),
+                  ),
+                  if (onSaveImage != null && (saveImageLabel ?? '').isNotEmpty)
+                    TextButton(
+                      onPressed: onSaveImage,
+                      child: Text(saveImageLabel!),
+                    ),
+                  TextButton(onPressed: onRetry, child: Text(retryLabel)),
+                  if (onReuseReferences != null &&
+                      (reuseReferencesLabel ?? '').isNotEmpty)
+                    TextButton(
+                      onPressed: onReuseReferences,
+                      child: Text(reuseReferencesLabel!),
+                    ),
+                  if (onReuseGeneratedImage != null &&
+                      (reuseGeneratedImageLabel ?? '').isNotEmpty)
+                    TextButton(
+                      onPressed: onReuseGeneratedImage,
+                      child: Text(reuseGeneratedImageLabel!),
+                    ),
+                  if (onCopyError != null && (copyErrorLabel ?? '').isNotEmpty)
+                    TextButton(
+                      onPressed: onCopyError,
+                      child: Text(copyErrorLabel!),
+                    ),
+                ],
+              ),
+              if (imageWidget != null) ...[
+                const SizedBox(height: 6),
+                imageWidget!,
+              ] else if ((errorText ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                SelectableText(errorText!),
               ],
-            ),
-            if (imageWidget != null) ...[
-              const SizedBox(height: 6),
-              imageWidget!,
-            ] else if ((errorText ?? '').trim().isNotEmpty) ...[
-              const SizedBox(height: 6),
-              SelectableText(errorText!),
             ],
-          ],
+          ),
         ),
       ),
     );

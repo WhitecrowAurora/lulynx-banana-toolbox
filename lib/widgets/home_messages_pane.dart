@@ -10,6 +10,7 @@ class HomeMessagesPane extends StatelessWidget {
     required this.jumpToLatestTooltip,
     required this.onScrollNotification,
     required this.onJumpToLatest,
+    this.searchNavigator,
   });
 
   final ScrollController scrollController;
@@ -19,6 +20,7 @@ class HomeMessagesPane extends StatelessWidget {
   final String jumpToLatestTooltip;
   final NotificationListenerCallback<UserScrollNotification> onScrollNotification;
   final VoidCallback onJumpToLatest;
+  final Widget? searchNavigator;
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +63,8 @@ class HomeMessagesPane extends StatelessWidget {
             ),
           ),
         ),
+        if (searchNavigator != null)
+          Positioned(right: 12, bottom: 12, child: searchNavigator!),
       ],
     );
   }

@@ -29,6 +29,7 @@ import '../widgets/home_messages_pane.dart';
 import '../widgets/home_session_drawer.dart';
 import '../widgets/reference_images_panel.dart';
 import 'gallery_picker_screen.dart';
+import 'history_generations_screen.dart';
 import 'settings_screen.dart';
 
 Uint8List _preprocessReferenceBytesInIsolate(Map<String, Object> payload) {
@@ -165,7 +166,9 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
   final _promptController = TextEditingController();
+  final _searchController = TextEditingController();
   final _scrollController = ScrollController();
+  final Map<int, GlobalKey> _messageItemKeys = <int, GlobalKey>{};
   static const MethodChannel _mediaScannerChannel =
       MethodChannel('com.nanobanana/media_scanner');
   static const MethodChannel _imageChooserChannel =
@@ -185,9 +188,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Timer? _draftSaveTimer;
   Timer? _scrollSettleTimer;
   Timer? _scrollLateSettleTimer;
+  Timer? _searchDebounceTimer;
+  Timer? _highlightPulseTimer;
   double? _lastScrollPixels;
   bool _isRestoringDraft = false;
   bool _draftRestored = false;
+  bool _isSearchMode = false;
+  bool _isSearchBusy = false;
+  bool _highlightPulseOn = false;
+  bool _suppressAutoJumpOnce = false;
+  String _searchQuery = '';
+  List<MessageSearchHit> _searchHits = const [];
+  int _activeSearchHitIndex = 0;
+  int? _pendingScrollMessageId;
+  int? _highlightedMessageId;
 
   static const String _composerDraftDirName = 'composer_draft';
   static const String _composerDraftManifestName = 'draft_v1.json';
@@ -215,11 +229,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _draftSaveTimer?.cancel();
     _scrollSettleTimer?.cancel();
     _scrollLateSettleTimer?.cancel();
+    _searchDebounceTimer?.cancel();
+    _highlightPulseTimer?.cancel();
     _promptController.removeListener(_onPromptChanged);
     _scrollController.removeListener(_handleListScroll);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_persistComposerDraftNow());
     _promptController.dispose();
+    _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -254,6 +271,376 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     ref.read(currentSessionIdProvider.notifier).state = sessionId;
     _lastSessionId = sessionId;
     await ref.read(storageServiceProvider).saveLastSessionId(sessionId);
+  }
+
+  String _sessionTitleById(int? sessionId) {
+    final session = ref.read(sessionsProvider).cast<ChatSession?>().firstWhere(
+      (item) => item?.id == sessionId,
+      orElse: () => null,
+    );
+    final title = session?.title.trim() ?? '';
+    if (title.isEmpty) {
+      return _tr('新对话');
+    }
+    return title;
+  }
+
+  void _showSessionSwitchedNotice(int? sessionId) {
+    if (!mounted || sessionId == null) return;
+    _showConfiguredSnackBar(
+      _tr('已切换到对话 {title}', args: {'title': _sessionTitleById(sessionId)}),
+    );
+  }
+
+  Future<void> _jumpToMessageInSession({
+    required int sessionId,
+    required int messageId,
+    String? promptToFill,
+    bool showSwitchNotice = false,
+  }) async {
+    final changedSession = ref.read(currentSessionIdProvider) != sessionId;
+    _suppressAutoJumpOnce = true;
+    await _setCurrentSession(sessionId);
+    ref.read(messagesProvider.notifier).refresh();
+    if (promptToFill != null) {
+      _promptController.text = promptToFill;
+      _promptController.selection = TextSelection.collapsed(
+        offset: _promptController.text.length,
+      );
+      _schedulePersistComposerDraft();
+    }
+    if (!mounted) return;
+    setState(() {
+      _followLatest = false;
+      _showJumpToLatest = true;
+      _pendingScrollMessageId = messageId;
+      _highlightedMessageId = messageId;
+      _highlightPulseOn = true;
+    });
+    _scheduleEnsureVisibleForPendingTarget();
+    if (showSwitchNotice && changedSession) {
+      _showSessionSwitchedNotice(sessionId);
+    }
+  }
+
+  Future<void> _openHistoryGenerations() async {
+    final action = await Navigator.push<HistoryGenerationAction>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const HistoryGenerationsScreen(),
+      ),
+    );
+    if (!mounted || action == null) return;
+
+    switch (action.type) {
+      case HistoryGenerationActionType.openOriginal:
+        await _jumpToMessageInSession(
+          sessionId: action.item.sessionId,
+          messageId: action.item.messageId,
+          promptToFill: action.item.prompt,
+          showSwitchNotice: true,
+        );
+        return;
+      case HistoryGenerationActionType.generateAgain:
+        await _generateAgainFromHistory(action.item);
+        return;
+    }
+  }
+
+  Future<void> _generateAgainFromHistory(HistoryGenerationItem item) async {
+    final changedSession = ref.read(currentSessionIdProvider) != item.sessionId;
+    await _setCurrentSession(item.sessionId);
+    _followLatest = true;
+    _showJumpToLatest = false;
+    _clearReferenceImages();
+    ref.read(generationProvider.notifier).clearResult();
+    _promptController.text = item.prompt;
+    _promptController.selection = TextSelection.collapsed(
+      offset: _promptController.text.length,
+    );
+    _schedulePersistComposerDraft();
+    _scheduleJumpToLatest(force: true);
+    if (changedSession) {
+      _showSessionSwitchedNotice(item.sessionId);
+    }
+    await _generate();
+  }
+
+  String _resolveCurrentSessionTitle(
+    List<ChatSession> sessions,
+    int? currentSessionId,
+  ) {
+    final session = sessions.cast<ChatSession?>().firstWhere(
+      (item) => item?.id == currentSessionId,
+      orElse: () => null,
+    );
+    final title = session?.title.trim() ?? '';
+    if (title.isEmpty) {
+      return "Lulynx's Banana Toolbox";
+    }
+    return title;
+  }
+
+  GlobalKey _messageItemKey(int? messageId) {
+    if (messageId == null) return GlobalKey();
+    return _messageItemKeys.putIfAbsent(messageId, GlobalKey.new);
+  }
+
+  void _openSearch() {
+    setState(() {
+      _isSearchMode = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      FocusScope.of(context).requestFocus(FocusNode());
+    });
+  }
+
+  void _closeSearch() {
+    _searchDebounceTimer?.cancel();
+    _highlightPulseTimer?.cancel();
+    setState(() {
+      _isSearchMode = false;
+      _isSearchBusy = false;
+      _searchQuery = '';
+      _searchHits = const [];
+      _activeSearchHitIndex = 0;
+      _pendingScrollMessageId = null;
+      _highlightedMessageId = null;
+      _highlightPulseOn = false;
+    });
+    _searchController.clear();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      unawaited(_runSearch(value));
+    });
+  }
+
+  Future<void> _runSearch(String rawQuery) async {
+    final query = rawQuery.trim();
+    if (query.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _searchQuery = '';
+        _searchHits = const [];
+        _activeSearchHitIndex = 0;
+        _pendingScrollMessageId = null;
+        _highlightedMessageId = null;
+        _highlightPulseOn = false;
+        _isSearchBusy = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _searchQuery = query;
+      _isSearchBusy = true;
+    });
+
+    try {
+      final hits = await ref.read(chatDatabaseProvider).searchMessages(query);
+      if (!mounted) return;
+      setState(() {
+        _searchHits = hits;
+        _activeSearchHitIndex = 0;
+        _isSearchBusy = false;
+      });
+      if (hits.isEmpty) {
+        setState(() {
+          _pendingScrollMessageId = null;
+          _highlightedMessageId = null;
+          _highlightPulseOn = false;
+        });
+        return;
+      }
+      await _activateSearchHit(0);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _searchHits = const [];
+        _activeSearchHitIndex = 0;
+        _pendingScrollMessageId = null;
+        _highlightedMessageId = null;
+        _highlightPulseOn = false;
+        _isSearchBusy = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('搜索失败，请重试'))),
+      );
+    }
+  }
+
+  Future<void> _activateSearchHit(int index) async {
+    if (_searchHits.isEmpty) return;
+    final clamped = index.clamp(0, _searchHits.length - 1);
+    final hit = _searchHits[clamped];
+    setState(() {
+      _activeSearchHitIndex = clamped;
+      _pendingScrollMessageId = hit.messageId;
+      _highlightedMessageId = hit.messageId;
+      _highlightPulseOn = true;
+      _followLatest = false;
+      _showJumpToLatest = true;
+    });
+    if (ref.read(currentSessionIdProvider) != hit.sessionId) {
+      _suppressAutoJumpOnce = true;
+      await _setCurrentSession(hit.sessionId);
+      ref.read(messagesProvider.notifier).refresh();
+      _showSessionSwitchedNotice(hit.sessionId);
+    } else {
+      _scheduleEnsureVisibleForPendingTarget();
+    }
+  }
+
+  Future<void> _navigateSearchHit(int delta) async {
+    if (_searchHits.isEmpty) return;
+    final next = (_activeSearchHitIndex + delta).clamp(0, _searchHits.length - 1);
+    if (next == _activeSearchHitIndex) return;
+    await _activateSearchHit(next);
+  }
+
+  void _scheduleEnsureVisibleForPendingTarget() {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final targetId = _pendingScrollMessageId;
+      if (targetId == null) return;
+      final messages = ref.read(messagesProvider);
+      final index = messages.indexWhere((m) => m.id == targetId);
+      if (index == -1) return;
+
+      final key = _messageItemKeys[targetId];
+      if (key?.currentContext == null) {
+        if (_scrollController.hasClients) {
+          final estimated = (index * 260.0).clamp(
+            0.0,
+            _scrollController.position.maxScrollExtent,
+          );
+          _scrollController.jumpTo(estimated);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _scheduleEnsureVisibleForPendingTarget();
+            }
+          });
+        }
+        return;
+      }
+
+      await Scrollable.ensureVisible(
+        key!.currentContext!,
+        alignment: 0.18,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeInOutCubic,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pendingScrollMessageId = null;
+      });
+      _triggerHighlightPulse(targetId);
+    });
+  }
+
+  void _triggerHighlightPulse(int messageId) {
+    _highlightPulseTimer?.cancel();
+    var ticks = 0;
+    setState(() {
+      _highlightedMessageId = messageId;
+      _highlightPulseOn = true;
+    });
+    _highlightPulseTimer = Timer.periodic(const Duration(milliseconds: 320), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      ticks += 1;
+      if (ticks >= 5) {
+        timer.cancel();
+        setState(() {
+          _highlightPulseOn = false;
+          _highlightedMessageId = null;
+        });
+        return;
+      }
+      setState(() {
+        _highlightPulseOn = !_highlightPulseOn;
+      });
+    });
+  }
+  Widget _buildPromptText(String prompt, {required bool highlightMatches}) {
+    final query = _searchQuery.trim();
+    final baseStyle = Theme.of(context).textTheme.bodyLarge;
+    if (!highlightMatches || query.isEmpty) {
+      return Text(prompt, style: baseStyle);
+    }
+    final lowerPrompt = prompt.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final spans = <TextSpan>[];
+    var start = 0;
+    while (true) {
+      final index = lowerPrompt.indexOf(lowerQuery, start);
+      if (index == -1) {
+        spans.add(TextSpan(text: prompt.substring(start), style: baseStyle));
+        break;
+      }
+      if (index > start) {
+        spans.add(
+          TextSpan(text: prompt.substring(start, index), style: baseStyle),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: prompt.substring(index, index + query.length),
+          style: baseStyle?.copyWith(
+            backgroundColor: const Color(0xFFFFEB3B),
+            fontWeight: FontWeight.w700,
+            color: baseStyle.color,
+          ),
+        ),
+      );
+      start = index + query.length;
+    }
+    return Text.rich(TextSpan(children: spans, style: baseStyle));
+  }
+
+  Widget? _buildSearchNavigator() {
+    if (!_isSearchMode || _searchQuery.isEmpty) return null;
+    final total = _searchHits.length;
+    final current = total == 0 ? 0 : _activeSearchHitIndex + 1;
+    return Material(
+      elevation: 6,
+      borderRadius: BorderRadius.circular(18),
+      color: Theme.of(context).colorScheme.surface,
+      child: SizedBox(
+        width: 58,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: _tr('上一个命中'),
+              onPressed: total > 1 && current > 1 ? () => _navigateSearchHit(-1) : null,
+              icon: const Icon(Icons.keyboard_arrow_up),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                '$current/$total',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+            const Divider(height: 12),
+            IconButton(
+              tooltip: _tr('下一个命中'),
+              onPressed: total > 1 && current < total ? () => _navigateSearchHit(1) : null,
+              icon: const Icon(Icons.keyboard_arrow_down),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _tryAutoLoadHomeBalance(ApiConfig config) {
@@ -975,9 +1362,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Future<void> _newSession() async {
     final session = await ref.read(sessionsProvider.notifier).createSession();
     await _setCurrentSession(session.id);
+    _showSessionSwitchedNotice(session.id);
     _followLatest = true;
     _showJumpToLatest = false;
-    ref.read(generationProvider.notifier).clearQueue(cancelCurrent: true);
     _clearReferenceImages();
     ref.read(generationProvider.notifier).clearResult();
     _schedulePersistComposerDraft();
@@ -1549,39 +1936,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             (msg.imageBytes?.isNotEmpty ?? false));
     final hasErrorText =
         !msg.isSuccess && (msg.errorMessage ?? '').trim().isNotEmpty;
+    final messageId = msg.id;
+    final isSearchTarget = messageId != null && _highlightedMessageId == messageId;
+    final isActiveSearchHit = isSearchTarget && _highlightPulseOn;
 
-    return ChatMessageCard(
-      prompt: msg.prompt,
-      statusText: msg.isSuccess ? _tr('成功') : _tr('失败'),
-      timeText: '${_tr('时间')}: ${_formatDateTime(msg.createdAt)}',
-      durationText: '${_tr('耗时')}: ${_formatDuration(msg.generationDurationMs)}',
-      copyPromptLabel: _tr('复制提示词'),
-      retryLabel: _tr('重试'),
-      saveImageLabel: canSaveImage ? _tr('保存图片') : null,
-      reuseReferencesLabel:
-          msg.referenceImagePaths.isNotEmpty ? _tr('复用参考图') : null,
-      reuseGeneratedImageLabel:
-          canReuseGenerated ? _tr('复用生成图') : null,
-      copyErrorLabel: hasErrorText ? _tr('复制错误') : null,
-      onCopyPrompt: () => _copyText(
-        msg.prompt,
-        success: _tr('提示词已复制'),
+    return KeyedSubtree(
+      key: _messageItemKey(messageId),
+      child: ChatMessageCard(
+        prompt: msg.prompt,
+        promptWidget: _buildPromptText(
+          msg.prompt,
+          highlightMatches: isSearchTarget,
+        ),
+        isHighlighted: isActiveSearchHit,
+        statusText: msg.isSuccess ? _tr('成功') : _tr('失败'),
+        timeText: '${_tr('时间')}: ${_formatDateTime(msg.createdAt)}',
+        durationText: '${_tr('耗时')}: ${_formatDuration(msg.generationDurationMs)}',
+        copyPromptLabel: _tr('复制提示词'),
+        retryLabel: _tr('重试'),
+        saveImageLabel: canSaveImage ? _tr('保存图片') : null,
+        reuseReferencesLabel:
+            msg.referenceImagePaths.isNotEmpty ? _tr('复用参考图') : null,
+        reuseGeneratedImageLabel:
+            canReuseGenerated ? _tr('复用生成图') : null,
+        copyErrorLabel: hasErrorText ? _tr('复制错误') : null,
+        onCopyPrompt: () => _copyText(
+          msg.prompt,
+          success: _tr('提示词已复制'),
+        ),
+        onRetry: () => _retry(msg),
+        onSaveImage: canSaveImage ? () => _saveMessageImage(msg) : null,
+        onReuseReferences: msg.referenceImagePaths.isNotEmpty
+            ? () => _reuseMessageReferences(msg)
+            : null,
+        onReuseGeneratedImage:
+            canReuseGenerated ? () => _reuseGeneratedImage(msg) : null,
+        onCopyError: hasErrorText
+            ? () => _copyText(
+                  msg.errorMessage!,
+                  success: _tr('错误信息已复制'),
+                )
+            : null,
+        imageWidget: canReuseGenerated ? _buildMessageImage(msg) : null,
+        errorText: msg.isSuccess ? null : (msg.errorMessage ?? _tr('生成失败')),
       ),
-      onRetry: () => _retry(msg),
-      onSaveImage: canSaveImage ? () => _saveMessageImage(msg) : null,
-      onReuseReferences: msg.referenceImagePaths.isNotEmpty
-          ? () => _reuseMessageReferences(msg)
-          : null,
-      onReuseGeneratedImage:
-          canReuseGenerated ? () => _reuseGeneratedImage(msg) : null,
-      onCopyError: hasErrorText
-          ? () => _copyText(
-                msg.errorMessage!,
-                success: _tr('错误信息已复制'),
-              )
-          : null,
-      imageWidget: canReuseGenerated ? _buildMessageImage(msg) : null,
-      errorText: msg.isSuccess ? null : (msg.errorMessage ?? _tr('生成失败')),
     );
   }
 
@@ -1593,14 +1991,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final messages = ref.watch(messagesProvider);
     final generationState = ref.watch(generationProvider);
     final balanceState = ref.watch(balanceProvider);
+    final currentSessionTitle = _resolveCurrentSessionTitle(
+      sessions,
+      currentSessionId,
+    );
 
     _tryAutoLoadHomeBalance(config);
+    if (_pendingScrollMessageId != null) {
+      _scheduleEnsureVisibleForPendingTarget();
+    }
     if (_lastRenderedSessionId != currentSessionId) {
       _lastRenderedSessionId = currentSessionId;
       _lastRenderedMessageCount = messages.length;
-      _followLatest = true;
-      _showJumpToLatest = false;
-      _scheduleJumpToLatest(force: true);
+      if (_suppressAutoJumpOnce) {
+        _suppressAutoJumpOnce = false;
+        _followLatest = false;
+        _showJumpToLatest = true;
+      } else {
+        _followLatest = true;
+        _showJumpToLatest = false;
+        _scheduleJumpToLatest(force: true);
+      }
     } else if (messages.length != _lastRenderedMessageCount) {
       final grew = messages.length > _lastRenderedMessageCount;
       _lastRenderedMessageCount = messages.length;
@@ -1624,25 +2035,68 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Lulynx's Toolbox"),
-        centerTitle: true,
+        title: _isSearchMode
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: _tr('搜索提示词...'),
+                  border: InputBorder.none,
+                  suffixIcon: _searchController.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: _tr('清空'),
+                          onPressed: () {
+                            _searchController.clear();
+                            _onSearchChanged('');
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                ),
+                onChanged: _onSearchChanged,
+                onSubmitted: (value) => unawaited(_runSearch(value)),
+              )
+            : Text(currentSessionTitle),
+        centerTitle: !_isSearchMode,
         leading: Builder(
           builder: (context) => IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () => Scaffold.of(context).openDrawer(),
+            icon: Icon(_isSearchMode ? Icons.arrow_back : Icons.menu),
+            onPressed: _isSearchMode
+                ? _closeSearch
+                : () => Scaffold.of(context).openDrawer(),
           ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_comment),
-            tooltip: _tr('新对话'),
-            onPressed: _newSession,
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-          ),
-        ],
+        actions: _isSearchMode
+            ? [
+                if (_isSearchBusy)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+              ]
+            : [
+                IconButton(
+                  icon: const Icon(Icons.search),
+                  tooltip: _tr('搜索'),
+                  onPressed: _openSearch,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_comment),
+                  tooltip: _tr('新对话'),
+                  onPressed: _newSession,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: _openSettings,
+                ),
+              ],
       ),
       drawer: _buildSessionDrawer(),
       body: Column(
@@ -1655,7 +2109,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 final msg = messages[index];
                 return _buildChatMessageCard(msg);
               },
-              showJumpToLatest: _showJumpToLatest,
+              showJumpToLatest: !_isSearchMode && _showJumpToLatest,
               jumpToLatestTooltip: _tr('跳转到最新消息'),
               onScrollNotification: (notification) {
                 if (notification.direction == ScrollDirection.forward) {
@@ -1677,6 +2131,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 });
                 _scheduleJumpToLatest(force: true);
               },
+              searchNavigator: _buildSearchNavigator(),
             ),
           ),
           _buildComposerPanel(config, generationState, balanceState),
@@ -1827,20 +2282,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       newSessionTooltip: _tr('新建对话'),
       renameLabel: _tr('重命名'),
       deleteLabel: _tr('删除'),
+      historyGenerationsLabel: _tr('历史生成'),
       formatRelativeTime: _formatRelativeTime,
       onCreateSession: _newSession,
       onRenameSession: _renameSession,
       onDeleteSession: _deleteSession,
+      onOpenHistoryGenerations: _openHistoryGenerations,
       onSelectSession: (session) async {
-        ref.read(generationProvider.notifier).clearQueue(
-              cancelCurrent: true,
-            );
+        final changedSession = ref.read(currentSessionIdProvider) != session.id;
         await _setCurrentSession(session.id);
         _followLatest = true;
         _showJumpToLatest = false;
         _clearReferenceImages();
         ref.read(generationProvider.notifier).clearResult();
         _scheduleJumpToLatest(force: true);
+        if (changedSession) {
+          _showSessionSwitchedNotice(session.id);
+        }
       },
     );
   }

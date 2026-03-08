@@ -11,6 +11,7 @@ class GenerationQueueTask {
   final String prompt;
   final List<Uint8List> referenceImages;
   final DateTime createdAt;
+  final int? sessionId;
   final QueueTaskStatus status;
   final bool fromRetry;
 
@@ -19,6 +20,7 @@ class GenerationQueueTask {
     required this.prompt,
     required this.referenceImages,
     required this.createdAt,
+    this.sessionId,
     this.status = QueueTaskStatus.pending,
     this.fromRetry = false,
   });
@@ -28,6 +30,7 @@ class GenerationQueueTask {
     String? prompt,
     List<Uint8List>? referenceImages,
     DateTime? createdAt,
+    int? sessionId,
     QueueTaskStatus? status,
     bool? fromRetry,
   }) {
@@ -36,6 +39,7 @@ class GenerationQueueTask {
       prompt: prompt ?? this.prompt,
       referenceImages: referenceImages ?? this.referenceImages,
       createdAt: createdAt ?? this.createdAt,
+      sessionId: sessionId ?? this.sessionId,
       status: status ?? this.status,
       fromRetry: fromRetry ?? this.fromRetry,
     );
@@ -62,6 +66,7 @@ class GenerationQueueTask {
       'referenceImages':
           referenceImages.map((image) => base64Encode(image)).toList(),
       'createdAt': createdAt.toIso8601String(),
+      'sessionId': sessionId,
       'status': status.name,
       'fromRetry': fromRetry,
     };
@@ -98,6 +103,7 @@ class GenerationQueueTask {
       prompt: json['prompt']?.toString() ?? '',
       referenceImages: referenceImages,
       createdAt: createdAt,
+      sessionId: json['sessionId'] as int?,
       status: status,
       fromRetry: json['fromRetry'] == true,
     );

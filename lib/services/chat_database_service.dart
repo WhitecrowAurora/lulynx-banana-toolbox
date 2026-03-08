@@ -231,6 +231,82 @@ class ChatDatabaseService {
     return maps.map((m) => ChatMessage.fromMap(m)).toList();
   }
 
+
+  Future<List<MessageSearchHit>> searchMessages(String keyword, {int limit = 200}) async {
+    final trimmed = keyword.trim();
+    if (trimmed.isEmpty) return const [];
+
+    final db = await database;
+    final pattern = '%$trimmed%';
+    final rows = await db.rawQuery(
+      '''
+      SELECT
+        m.id AS message_id,
+        m.session_id AS session_id,
+        COALESCE(s.title, '') AS session_title,
+        m.prompt AS prompt,
+        m.created_at AS created_at
+      FROM messages m
+      LEFT JOIN sessions s ON s.id = m.session_id
+      WHERE TRIM(m.prompt) != ''
+        AND (m.prompt LIKE ? OR COALESCE(s.title, '') LIKE ?)
+      ORDER BY datetime(m.created_at) DESC, m.id DESC
+      LIMIT ?
+      ''',
+      [pattern, pattern, limit],
+    );
+    return rows
+        .map((row) => MessageSearchHit.fromMap(Map<String, dynamic>.from(row)))
+        .toList();
+  }
+
+  Future<List<String>> getRecentPromptHistory({int limit = 50}) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT prompt, MAX(created_at) AS last_used_at
+      FROM messages
+      WHERE TRIM(prompt) != ''
+      GROUP BY prompt
+      ORDER BY datetime(last_used_at) DESC
+      LIMIT ?
+      ''',
+      [limit],
+    );
+    return rows
+        .map((row) => row['prompt']?.toString().trim() ?? '')
+        .where((prompt) => prompt.isNotEmpty)
+        .toList();
+  }
+
+
+  Future<List<HistoryGenerationItem>> getRecentGeneratedHistory({int limit = 100}) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT
+        m.id AS message_id,
+        m.session_id AS session_id,
+        COALESCE(s.title, '') AS session_title,
+        m.prompt AS prompt,
+        m.image_url AS image_url,
+        m.created_at AS created_at
+      FROM messages m
+      LEFT JOIN sessions s ON s.id = m.session_id
+      WHERE m.is_success = 1
+        AND COALESCE(TRIM(m.image_url), '') != ''
+        AND TRIM(m.prompt) != ''
+      ORDER BY datetime(m.created_at) DESC, m.id DESC
+      LIMIT ?
+      ''',
+      [limit],
+    );
+    return rows
+        .map((row) => HistoryGenerationItem.fromMap(Map<String, dynamic>.from(row)))
+        .toList();
+  }
+
+
   Future<String> _saveImage(Uint8List bytes, int sessionId) async {
     final sessionDir = await _sessionDir(sessionId);
     final outputsDir = Directory(path.join(sessionDir.path, 'outputs'));

@@ -351,26 +351,13 @@ class MessagesNotifier extends StateNotifier<List<ChatMessage>> {
 
   Future<void> addMessage(ChatMessage message) async {
     final sessionId = _sessionId;
-    if (sessionId != null && sessionId == message.sessionId) {
+    if (sessionId == null) {
+      return;
+    }
+    if (sessionId == message.sessionId) {
       await loadMessages();
       return;
     }
-
-    if (message.id != null && state.any((m) => m.id == message.id)) {
-      return;
-    }
-
-    final existsByContent = state.any((m) =>
-        m.sessionId == message.sessionId &&
-        m.prompt == message.prompt &&
-        m.imageUrl == message.imageUrl &&
-        m.errorMessage == message.errorMessage &&
-        m.createdAt == message.createdAt);
-    if (existsByContent) {
-      return;
-    }
-
-    state = [...state, message];
   }
 
   void refresh() {
@@ -665,12 +652,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
   }) async {
     final trimmedPrompt = prompt.trim();
     if (trimmedPrompt.isEmpty) return false;
+    final sessionId = await _ensureSession();
 
     final task = GenerationQueueTask(
       id: _nextTaskId(),
       prompt: trimmedPrompt,
       referenceImages: List<Uint8List>.from(referenceImages),
       createdAt: DateTime.now(),
+      sessionId: sessionId,
       fromRetry: fromRetry,
     );
 
@@ -845,7 +834,7 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
           },
         );
 
-        final sessionId = await _ensureSession();
+        final sessionId = nextTask.sessionId ?? await _ensureSession();
         final stopwatch = Stopwatch()..start();
 
         _currentCancelToken = CancelToken();

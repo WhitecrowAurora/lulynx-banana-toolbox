@@ -16,6 +16,8 @@ class HomeSessionDrawer extends StatelessWidget {
     required this.onRenameSession,
     required this.onDeleteSession,
     required this.onSelectSession,
+    required this.historyGenerationsLabel,
+    required this.onOpenHistoryGenerations,
   });
 
   final List<ChatSession> sessions;
@@ -29,6 +31,8 @@ class HomeSessionDrawer extends StatelessWidget {
   final Future<void> Function(ChatSession session) onRenameSession;
   final Future<void> Function(ChatSession session) onDeleteSession;
   final Future<void> Function(ChatSession session) onSelectSession;
+  final String historyGenerationsLabel;
+  final Future<void> Function() onOpenHistoryGenerations;
 
   @override
   Widget build(BuildContext context) {
@@ -104,6 +108,16 @@ class HomeSessionDrawer extends StatelessWidget {
                   );
                 },
               ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(historyGenerationsLabel),
+              onTap: () async {
+                await onOpenHistoryGenerations();
+                if (!context.mounted) return;
+                Navigator.pop(context);
+              },
             ),
           ],
         ),

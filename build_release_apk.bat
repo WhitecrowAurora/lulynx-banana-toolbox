@@ -18,6 +18,7 @@ set "GRADLE_USER_HOME=%CD%\.gradle-home"
 set "ANDROID_USER_HOME=%CD%\.android-home"
 set "GRADLE_PROJECT_CACHE=%CD%\.gradle-project-cache"
 set "BUILD_LOG=%CD%\build\release_build.log"
+set "APK_ARCHIVE_DIR=%CD%\build\apk_archive"
 
 if not exist "%FLUTTER_BIN%" (
   echo [ERROR] Flutter not found: %FLUTTER_BIN%
@@ -36,6 +37,7 @@ if not exist "%GRADLE_USER_HOME%" mkdir "%GRADLE_USER_HOME%"
 if not exist "%ANDROID_USER_HOME%" mkdir "%ANDROID_USER_HOME%"
 if not exist "%GRADLE_PROJECT_CACHE%" mkdir "%GRADLE_PROJECT_CACHE%"
 if not exist "%CD%\build" mkdir "%CD%\build"
+if not exist "%APK_ARCHIVE_DIR%" mkdir "%APK_ARCHIVE_DIR%"
 
 set "PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\cmdline-tools\latest\bin;%ANDROID_HOME%\platform-tools;%PATH%"
 set "GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=2 -Dorg.gradle.internal.instrumentation.agent=false -Dorg.gradle.projectcachedir=%GRADLE_PROJECT_CACHE% -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv6Addresses=false %GRADLE_OPTS%"
@@ -56,7 +58,7 @@ if exist "%GRADLE_USER_HOME%\daemon\8.3\registry.bin.lock" del /f /q "%GRADLE_US
 if exist "%GRADLE_USER_HOME%\daemon\8.3\registry.bin" del /f /q "%GRADLE_USER_HOME%\daemon\8.3\registry.bin" >nul 2>&1
 echo [INFO] Clearing stale Android build caches...
 if exist "%CD%\build\app\intermediates" rmdir /s /q "%CD%\build\app\intermediates"
-if exist "%CD%\build\app\outputs" rmdir /s /q "%CD%\build\app\outputs"
+REM Keep previous APKs under build/app/outputs and archive each successful build separately.
 if exist "%GRADLE_USER_HOME%\caches\transforms-3" rmdir /s /q "%GRADLE_USER_HOME%\caches\transforms-3"
 echo [INFO] Starting release build...
 echo.
@@ -79,34 +81,30 @@ if not "%EXIT_CODE%"=="0" (
 )
 
 set "APK_PATH=%CD%\build\app\outputs\flutter-apk\app-release.apk"
-if exist "%APK_PATH%" (
+set "APK_DIR=%CD%\build\app\outputs\flutter-apk"
+set "LATEST_APK="
+if exist "%APK_PATH%" set "LATEST_APK=%APK_PATH%"
+if not defined LATEST_APK if exist "%APK_DIR%" (
+  for /f "delims=" %%F in ('powershell -NoProfile -Command "Get-ChildItem -Path '%APK_DIR%' -Filter '*.apk' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName"') do set "LATEST_APK=%%F"
+)
+
+if defined LATEST_APK (
   echo [SUCCESS] Build completed.
-  for %%I in ("%APK_PATH%") do (
+  for %%I in ("!LATEST_APK!") do (
     set "APK_SIZE=%%~zI"
     set "APK_TIME=%%~tI"
+    set "APK_EXT=%%~xI"
   )
-  echo [INFO] APK: %APK_PATH%
+  for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "BUILD_STAMP=%%T"
+  set "ARCHIVED_APK=%APK_ARCHIVE_DIR%\banana_toolbox_!BUILD_STAMP!!APK_EXT!"
+  copy /y "!LATEST_APK!" "!ARCHIVED_APK!" >nul
+  echo [INFO] APK: !LATEST_APK!
   echo [INFO] Size: !APK_SIZE! bytes
   echo [INFO] Updated: !APK_TIME!
+  echo [INFO] Archived copy: !ARCHIVED_APK!
 ) else (
-  set "APK_DIR=%CD%\build\app\outputs\flutter-apk"
-  set "LATEST_APK="
-  if exist "%APK_DIR%" (
-    for /f "delims=" %%F in ('powershell -NoProfile -Command "Get-ChildItem -Path '%APK_DIR%' -Filter '*.apk' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName"') do set "LATEST_APK=%%F"
-  )
-  if defined LATEST_APK (
-    echo [SUCCESS] Build completed.
-    for %%I in ("!LATEST_APK!") do (
-      set "APK_SIZE=%%~zI"
-      set "APK_TIME=%%~tI"
-    )
-    echo [INFO] APK: !LATEST_APK!
-    echo [INFO] Size: !APK_SIZE! bytes
-    echo [INFO] Updated: !APK_TIME!
-  ) else (
-    echo [WARN] Build command returned success but no APK was found.
-    echo [WARN] Check: %CD%\build\app\outputs\flutter-apk\
-  )
+  echo [WARN] Build command returned success but no APK was found.
+  echo [WARN] Check: %CD%\build\app\outputs\flutter-apk\
 )
 
 echo.

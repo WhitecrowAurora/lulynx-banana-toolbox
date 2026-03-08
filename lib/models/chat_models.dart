@@ -104,3 +104,60 @@ class ChatSession {
         updatedAt: updatedAt ?? this.updatedAt,
       );
 }
+
+
+class MessageSearchHit {
+  final int messageId;
+  final int sessionId;
+  final String sessionTitle;
+  final String prompt;
+  final DateTime createdAt;
+
+  const MessageSearchHit({
+    required this.messageId,
+    required this.sessionId,
+    required this.sessionTitle,
+    required this.prompt,
+    required this.createdAt,
+  });
+
+  factory MessageSearchHit.fromMap(Map<String, dynamic> map) {
+    return MessageSearchHit(
+      messageId: map['message_id'] as int,
+      sessionId: map['session_id'] as int,
+      sessionTitle: (map['session_title'] as String?) ?? '',
+      prompt: (map['prompt'] as String?) ?? '',
+      createdAt: DateTime.parse(map['created_at'] as String),
+    );
+  }
+}
+
+
+class HistoryGenerationItem {
+  final int messageId;
+  final int sessionId;
+  final String sessionTitle;
+  final String prompt;
+  final String? imageUrl;
+  final DateTime createdAt;
+
+  const HistoryGenerationItem({
+    required this.messageId,
+    required this.sessionId,
+    required this.sessionTitle,
+    required this.prompt,
+    required this.imageUrl,
+    required this.createdAt,
+  });
+
+  factory HistoryGenerationItem.fromMap(Map<String, dynamic> map) {
+    return HistoryGenerationItem(
+      messageId: map['message_id'] as int,
+      sessionId: map['session_id'] as int,
+      sessionTitle: (map['session_title'] as String?) ?? '',
+      prompt: (map['prompt'] as String?) ?? '',
+      imageUrl: map['image_url'] as String?,
+      createdAt: DateTime.parse(map['created_at'] as String),
+    );
+  }
+}
