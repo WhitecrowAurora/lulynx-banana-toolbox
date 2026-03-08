@@ -4,6 +4,10 @@ A Flutter Android client for Nano Banana compatible image generation APIs.
 
 一个基于 Nano Banana 兼容 API 的 Flutter Android 图像生成客户端。
 
+## Download / 下载
+
+**[Click to Download / 点击下载](https://github.com/WhitecrowAurora/lulynx-banana-toolbox/releases)**
+
 ## Features / 功能
 
 - Text-to-image generation  
