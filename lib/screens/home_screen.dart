@@ -197,6 +197,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   bool _isSearchBusy = false;
   bool _highlightPulseOn = false;
   bool _suppressAutoJumpOnce = false;
+  bool _ensureVisibleScheduled = false;
   String _searchQuery = '';
   List<MessageSearchHit> _searchHits = const [];
   int _activeSearchHitIndex = 0;
@@ -504,7 +505,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _scheduleEnsureVisibleForPendingTarget() {
+    if (_ensureVisibleScheduled || _pendingScrollMessageId == null) return;
+    _ensureVisibleScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _ensureVisibleScheduled = false;
       if (!mounted) return;
       final targetId = _pendingScrollMessageId;
       if (targetId == null) return;
@@ -520,11 +524,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             _scrollController.position.maxScrollExtent,
           );
           _scrollController.jumpTo(estimated);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _scheduleEnsureVisibleForPendingTarget();
-            }
-          });
+          if (mounted && _pendingScrollMessageId == targetId) {
+            _scheduleEnsureVisibleForPendingTarget();
+          }
         }
         return;
       }
@@ -535,7 +537,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeInOutCubic,
       );
-      if (!mounted) return;
+      if (!mounted || _pendingScrollMessageId != targetId) return;
       setState(() {
         _pendingScrollMessageId = null;
       });
@@ -2112,6 +2114,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               showJumpToLatest: !_isSearchMode && _showJumpToLatest,
               jumpToLatestTooltip: _tr('跳转到最新消息'),
               onScrollNotification: (notification) {
+                if (notification.direction != ScrollDirection.idle &&
+                    _pendingScrollMessageId != null) {
+                  setState(() {
+                    _pendingScrollMessageId = null;
+                  });
+                }
                 if (notification.direction == ScrollDirection.forward) {
                   _scrollSettleTimer?.cancel();
                   _scrollLateSettleTimer?.cancel();
