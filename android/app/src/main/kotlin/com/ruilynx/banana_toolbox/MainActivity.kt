@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,6 +23,7 @@ class MainActivity: FlutterActivity() {
     private val FOREGROUND_CHANNEL = "com.nanobanana/foreground_service"
     private val LOG_FILE_CHANNEL = "com.nanobanana/log_file"
     private val IMAGE_CHOOSER_CHANNEL = "com.nanobanana/image_chooser"
+    private val APP_UPDATE_CHANNEL = "com.nanobanana/app_update"
     private val IMAGE_CHOOSER_REQUEST_CODE = 20031
     private var pendingImageChooserResult: MethodChannel.Result? = null
 
@@ -128,6 +130,26 @@ class MainActivity: FlutterActivity() {
                     }
                 } catch (e: Exception) {
                     result.error("IMAGE_CHOOSER_ERROR", e.message, null)
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_UPDATE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "installApk" -> {
+                            val apkPath = call.argument<String>("apkPath")
+                            if (apkPath.isNullOrBlank()) {
+                                result.error("INVALID_APK_PATH", "APK path is empty", null)
+                            } else {
+                                val installResult = installDownloadedApk(apkPath)
+                                result.success(installResult)
+                            }
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    result.error("APP_UPDATE_ERROR", e.message, null)
                 }
             }
     }
@@ -307,6 +329,41 @@ class MainActivity: FlutterActivity() {
             pendingImageChooserResult = null
             result.error("IMAGE_CHOOSER_LAUNCH_ERROR", e.message, null)
         }
+    }
+
+    private fun installDownloadedApk(apkPath: String): String {
+        val apkFile = File(apkPath)
+        if (!apkFile.exists() || !apkFile.isFile) {
+            throw Exception("APK file not found")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            val settingsIntent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(settingsIntent)
+            return "permission_required"
+        }
+
+        val authority = "$packageName.fileprovider"
+        val contentUri = FileProvider.getUriForFile(this, authority, apkFile)
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(contentUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        if (installIntent.resolveActivity(packageManager) == null) {
+            throw Exception("No installer available")
+        }
+
+        startActivity(installIntent)
+        return "install_started"
     }
 
     private fun queryDisplayName(uri: Uri): String? {

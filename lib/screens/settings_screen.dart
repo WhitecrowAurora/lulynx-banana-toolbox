@@ -1,12 +1,14 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../l10n/app_i18n.dart';
@@ -16,6 +18,7 @@ import '../providers/providers.dart';
 import '../services/diagnostic_service.dart';
 import '../services/foreground_keep_alive_service.dart';
 import '../services/nano_banana_service.dart';
+import '../services/update_check_service.dart';
 import '../widgets/settings_about_card.dart';
 import '../widgets/settings_status_card.dart';
 import '../widgets/settings_stats_card.dart';
@@ -41,6 +44,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   static const MethodChannel _logFileChannel =
       MethodChannel('com.nanobanana/log_file');
+  static const MethodChannel _appUpdateChannel =
+      MethodChannel('com.nanobanana/app_update');
 
   late TextEditingController _baseUrlController;
   late TextEditingController _apiKeyController;
@@ -71,7 +76,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _modelLoadError;
   DateTime? _modelListUpdatedAt;
   String _modelListConfigKey = '';
+  String _appVersionLabel = 'v1.6.5';
+  bool _isCheckingUpdate = false;
+  bool _isDownloadingUpdate = false;
+  String? _updateStatus;
+  bool _hasAutoCheckedUpdate = false;
   final DiagnosticService _diagnosticService = DiagnosticService();
+  final UpdateCheckService _updateCheckService = UpdateCheckService();
 
   String _tr(String zh, {Map<String, Object?> args = const {}}) =>
       context.tr(zh, args: args);
@@ -84,6 +95,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _apiUserIdController = TextEditingController();
     _refreshStorageStats();
     _refreshBatteryOptimizationStatus();
+    unawaited(_loadPackageVersion());
   }
 
   @override
@@ -114,6 +126,302 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${value.year}-${two(value.month)}-${two(value.day)} '
         '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+
+  Future<void> _loadPackageVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final version = info.version.trim();
+      if (!mounted) return;
+      if (version.isNotEmpty) {
+        setState(() {
+          _appVersionLabel = 'v$version';
+        });
+      }
+    } catch (_) {}
+    final shouldAutoCheck = await _updateCheckService.shouldAutoCheckNow();
+    if (!mounted || !shouldAutoCheck) return;
+    await _checkForUpdates(userInitiated: false);
+  }
+
+  Future<void> _checkForUpdates({bool userInitiated = true}) async {
+    if (_isCheckingUpdate) return;
+    if (!userInitiated) {
+      await _updateCheckService.markCheckAttemptNow();
+    }
+    setState(() {
+      _isCheckingUpdate = true;
+      if (userInitiated) {
+        _updateStatus = _tr('检查中...');
+      }
+    });
+    try {
+      final result = await _updateCheckService.checkForUpdates(_appVersionLabel);
+      if (!mounted) return;
+      if (result.hasUpdate && result.release != null) {
+        final isSkipped = await _updateCheckService.isSkippedReleaseTag(
+          result.release!.tagName,
+        );
+        final latestDisplay = 'v${result.latestVersion}';
+        if (isSkipped && !userInitiated) {
+          setState(() {
+            _updateStatus = _tr('已跳过版本 {version}', args: {'version': latestDisplay});
+          });
+          return;
+        }
+        setState(() {
+          _updateStatus = _tr('发现新版本 {version}', args: {'version': latestDisplay});
+        });
+        if (userInitiated || !_hasAutoCheckedUpdate) {
+          await _showUpdateDialog(result);
+        }
+      } else {
+        setState(() {
+          _updateStatus = _tr(
+            '当前已是最新版本 {version}',
+            args: {'version': 'v${result.currentVersion}'},
+          );
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('检查更新失败: {error}', args: {'error': '$e'});
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingUpdate = false;
+          _hasAutoCheckedUpdate = true;
+        });
+      }
+    }
+  }
+
+  Future<void> _showUpdateDialog(UpdateCheckResult result) async {
+    final release = result.release;
+    if (release == null || !mounted) return;
+    final downloadUrl = release.apkDownloadUrl.isNotEmpty
+        ? release.apkDownloadUrl
+        : release.htmlUrl;
+    final notes = release.body.trim();
+    final preview = notes.isEmpty
+        ? _tr('暂无发布说明')
+        : (notes.length > 280 ? '${notes.substring(0, 280)}...' : notes);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final navigator = Navigator.of(dialogContext);
+        return AlertDialog(
+          title: Text(_tr('发现新版本')),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _tr('当前版本：{version}', args: {'version': 'v${result.currentVersion}'}),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _tr('最新版本：{version}', args: {'version': 'v${result.latestVersion}'}),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _tr('发布说明'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(preview),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await _updateCheckService.skipReleaseTag(release.tagName);
+                navigator.pop();
+                if (!mounted) return;
+                setState(() {
+                  _updateStatus = _tr(
+                    '已跳过版本 {version}',
+                    args: {'version': release.tagName},
+                  );
+                });
+              },
+              child: Text(_tr('跳过该版本')),
+            ),
+            TextButton(
+              onPressed: () => navigator.pop(),
+              child: Text(_tr('暂不')),
+            ),
+            if (release.apkDownloadUrl.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  navigator.pop();
+                  unawaited(_downloadAndInstallUpdate(release));
+                },
+                child: Text(_tr('下载并安装')),
+              ),
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: downloadUrl));
+                navigator.pop();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(_tr('下载地址已复制'))),
+                );
+              },
+              child: Text(
+                _tr(
+                  release.apkDownloadUrl.isNotEmpty ? '复制下载地址' : '复制发布页地址',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _downloadAndInstallUpdate(ReleaseInfo release) async {
+    if (_isDownloadingUpdate) return;
+    final downloadUrl = release.apkDownloadUrl.trim();
+    if (downloadUrl.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('未找到可下载的 APK 资源');
+      });
+      return;
+    }
+
+    final apkPath = await _cachedUpdateApkPath(release);
+    final apkFile = File(apkPath);
+    if (await apkFile.exists() && await apkFile.length() > 0) {
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('使用已下载的更新包 {version}', args: {'version': release.tagName});
+      });
+      await _installDownloadedApk(apkPath);
+      return;
+    }
+
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(minutes: 10),
+        followRedirects: true,
+      ),
+    );
+
+    setState(() {
+      _isDownloadingUpdate = true;
+      _updateStatus = _tr('开始下载更新 {version}', args: {'version': release.tagName});
+    });
+
+    try {
+      await dio.download(
+        downloadUrl,
+        apkPath,
+        deleteOnError: true,
+        onReceiveProgress: (received, total) {
+          if (!mounted) return;
+          if (total > 0) {
+            final percent = ((received / total) * 100).clamp(0, 100).toStringAsFixed(0);
+            setState(() {
+              _updateStatus = _tr('正在下载更新 {percent}%', args: {'percent': percent});
+            });
+          } else {
+            setState(() {
+              _updateStatus = _tr('正在下载更新...');
+            });
+          }
+        },
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('更新包已下载，正在启动安装');
+      });
+
+      final installResult = await _appUpdateChannel.invokeMethod<String>(
+        'installApk',
+        {'apkPath': apkPath},
+      );
+      if (!mounted) return;
+      switch (installResult) {
+        case 'install_started':
+          setState(() {
+            _updateStatus = _tr('已打开安装器');
+          });
+          break;
+        case 'permission_required':
+          setState(() {
+            _updateStatus = _tr('请允许安装未知来源应用后重试');
+          });
+          break;
+        default:
+          setState(() {
+            _updateStatus = _tr('启动安装失败');
+          });
+          break;
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('下载更新失败: {error}', args: {'error': '$e'});
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingUpdate = false;
+        });
+      }
+    }
+  }
+
+  Future<String> _cachedUpdateApkPath(ReleaseInfo release) async {
+    final supportDir = await getApplicationSupportDirectory();
+    final updateDir = Directory(path.join(supportDir.path, 'app_updates'));
+    if (!await updateDir.exists()) {
+      await updateDir.create(recursive: true);
+    }
+    final tag = release.tagName
+        .trim()
+        .replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '_');
+    return path.join(updateDir.path, 'lulynx_banana_toolbox_$tag.apk');
+  }
+
+  Future<void> _installDownloadedApk(String apkPath) async {
+    try {
+      final installResult = await _appUpdateChannel.invokeMethod<String>(
+        'installApk',
+        {'apkPath': apkPath},
+      );
+      if (!mounted) return;
+      switch (installResult) {
+        case 'install_started':
+          setState(() {
+            _updateStatus = _tr('已打开安装器');
+          });
+          break;
+        case 'permission_required':
+          setState(() {
+            _updateStatus = _tr('请允许安装未知来源应用后重试');
+          });
+          break;
+        default:
+          setState(() {
+            _updateStatus = _tr('启动安装失败');
+          });
+          break;
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _updateStatus = _tr('启动安装失败');
+      });
+    }
   }
 
   void _ensureModelListUpToDate(ApiConfig config) {
@@ -1327,7 +1635,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             aboutCard: SettingsAboutCard(
               appName: "Lulynx's Nano Banana Toolbox",
-              version: 'v1.1.0',
+              version: _appVersionLabel,
               copyrightTitle: tr('版权声明'),
               copyrightText: tr('Copyright (C) 2026 Lulu (Ruilynx). All rights reserved.'),
               thanksText: tr('Thanks Longyin and Lianz for bug testing to speed up development.'),
@@ -1337,6 +1645,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 tr('Do not repackage for distribution'),
                 tr('本软件永久免费，如有收费均为诈骗'),
               ],
+              checkUpdateLabel: tr('检查更新'),
+              onCheckUpdate: _checkForUpdates,
+              isCheckingUpdate: _isCheckingUpdate,
+              isDownloadingUpdate: _isDownloadingUpdate,
+              updateStatus: _updateStatus,
             ),
           ),
         ],
@@ -1445,4 +1758,3 @@ String _sniffImageMimeTypeBytes(Uint8List bytes) {
   }
   return 'image/jpeg';
 }
-

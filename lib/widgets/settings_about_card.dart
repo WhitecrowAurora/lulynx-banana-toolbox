@@ -9,6 +9,11 @@ class SettingsAboutCard extends StatelessWidget {
     required this.copyrightText,
     required this.thanksText,
     required this.licenseRows,
+    required this.checkUpdateLabel,
+    required this.onCheckUpdate,
+    this.isCheckingUpdate = false,
+    this.isDownloadingUpdate = false,
+    this.updateStatus,
   });
 
   final String appName;
@@ -17,6 +22,11 @@ class SettingsAboutCard extends StatelessWidget {
   final String copyrightText;
   final String thanksText;
   final List<String> licenseRows;
+  final String checkUpdateLabel;
+  final VoidCallback onCheckUpdate;
+  final bool isCheckingUpdate;
+  final bool isDownloadingUpdate;
+  final String? updateStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +98,34 @@ class SettingsAboutCard extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: (isCheckingUpdate || isDownloadingUpdate)
+                      ? null
+                      : onCheckUpdate,
+                  icon: (isCheckingUpdate || isDownloadingUpdate)
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.system_update_alt),
+                  label: Text(checkUpdateLabel),
+                ),
+              ],
+            ),
+            if ((updateStatus ?? '').isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                updateStatus!,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ],
         ),
       ),
