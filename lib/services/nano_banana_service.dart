@@ -913,6 +913,7 @@ class NanoBananaService {
   String _buildErrorInfo(DioException e) {
     final info = StringBuffer();
     final msg = (e.message ?? '').trim();
+    final response = e.response;
     info.writeln('========== 错误调试信息 ==========');
     info.writeln('错误类型: ${e.type}');
     info.writeln(
@@ -922,10 +923,14 @@ class NanoBananaService {
     info.writeln('请求方法: ${e.requestOptions.method}');
     info.writeln('请求头: ${_redactHeaders(e.requestOptions.headers)}');
 
-    if (e.response != null) {
-      info.writeln('响应状态码: ${e.response?.statusCode}');
-      info.writeln('响应头: ${e.response?.headers}');
-      info.writeln('响应数据: ${e.response?.data}');
+    if (response != null) {
+      final gatewayRequestId = _extractGatewayRequestId(response);
+      info.writeln('响应状态码: ${response.statusCode}');
+      if (gatewayRequestId != null && gatewayRequestId.isNotEmpty) {
+        info.writeln('网关请求 ID: $gatewayRequestId');
+      }
+      info.writeln('响应头: ${response.headers}');
+      info.writeln('响应数据: ${response.data}');
     }
 
     if (e.error != null) {
@@ -935,6 +940,21 @@ class NanoBananaService {
 
     info.writeln('===================================');
     return info.toString();
+  }
+
+  String? _extractGatewayRequestId(Response<dynamic> response) {
+    const candidateKeys = [
+      'x-oneapi-request-id',
+      'x-request-id',
+      'x-trace-id',
+    ];
+    for (final key in candidateKeys) {
+      final value = response.headers.value(key)?.trim();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
   }
 
   Map<String, dynamic> _redactHeaders(Map<String, dynamic> headers) {

@@ -1248,13 +1248,20 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     final category = _classifyError(code);
     final original = result.errorMessage ?? '请求失败';
     final alreadyTagged = original.startsWith('[');
+    final lowerMessage = original.toLowerCase();
 
     var message = alreadyTagged ? original : '[$category] $original';
-    if (hasReferenceImages &&
-        !config.referenceCompatEnhanced &&
-        !_isNetworkLikeError(code) &&
-        !message.contains('参考图兼容性增强')) {
+    if (_shouldSuggestReferenceCompat(
+      hasReferenceImages: hasReferenceImages,
+      config: config,
+      code: code,
+      lowerMessage: lowerMessage,
+      formattedMessage: message,
+    )) {
       message += '\n\n建议：设置 -> 请求与重试 -> 开启“参考图兼容性增强”后重试。';
+    }
+    if (code == 'http_429' && !message.contains('稍后再试')) {
+      message += '\n\n建议：这是网关/上游限流或过载，通常请求可能未进入上游执行记录。请稍后重试，或切换分组 / Provider / 模型后再试。';
     }
     return GenerationResult.error(
       message,
@@ -1272,6 +1279,37 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     if (_isNetworkLikeError(code)) return '网络异常';
     if (code == 'cancelled') return '用户取消';
     return '未知错误';
+  }
+
+  bool _shouldSuggestReferenceCompat({
+    required bool hasReferenceImages,
+    required ApiConfig config,
+    required String code,
+    required String lowerMessage,
+    required String formattedMessage,
+  }) {
+    if (!hasReferenceImages || config.referenceCompatEnhanced) {
+      return false;
+    }
+    if (_isNetworkLikeError(code) ||
+        code == 'http_429' ||
+        code == 'http_401' ||
+        code == 'http_403' ||
+        formattedMessage.contains('参考图兼容性增强')) {
+      return false;
+    }
+    if (code == 'http_400' || code == 'http_415' || code == 'http_422') {
+      return true;
+    }
+    return lowerMessage.contains('image') ||
+        lowerMessage.contains('base64') ||
+        lowerMessage.contains('mime') ||
+        lowerMessage.contains('format') ||
+        lowerMessage.contains('unsupported') ||
+        lowerMessage.contains('invalid') ||
+        lowerMessage.contains('图片') ||
+        lowerMessage.contains('参考图') ||
+        lowerMessage.contains('格式');
   }
 
   bool _isNetworkLikeError(String code) {
