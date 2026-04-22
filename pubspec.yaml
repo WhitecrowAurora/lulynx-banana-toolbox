@@ -3,7 +3,7 @@ description: AI Image Generation Client for Nano Banana API
 
 publish_to: 'none'
 
-version: 1.6.5+65
+version: 1.6.7+67
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -23,6 +23,12 @@ dependencies:
 
   # Local Storage
   shared_preferences: ^2.2.2
+
+  # Share
+  share_plus: ^7.2.2
+
+  # Shake detection
+  shake: ^2.2.0
 
   # Image Handling
   image_picker: ^1.0.7

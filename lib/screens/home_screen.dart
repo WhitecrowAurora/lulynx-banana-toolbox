@@ -13,12 +13,16 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:shake/shake.dart';
 
 import '../l10n/app_i18n.dart';
 import '../models/api_config.dart';
 import '../models/chat_models.dart';
 import '../models/generation_queue_task.dart';
 import '../providers/providers.dart';
+import '../services/haptic_service.dart';
+import '../services/home_widget_service.dart';
+import '../services/share_service.dart';
 import '../widgets/queue_panel.dart';
 import '../widgets/chat_message_card.dart';
 import '../widgets/home_balance_card.dart';
@@ -28,6 +32,7 @@ import '../widgets/home_message_image.dart';
 import '../widgets/home_messages_pane.dart';
 import '../widgets/home_session_drawer.dart';
 import '../widgets/reference_images_panel.dart';
+import '../widgets/image_preview_page.dart';
 import 'gallery_picker_screen.dart';
 import 'history_generations_screen.dart';
 import 'settings_screen.dart';
@@ -190,6 +195,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Timer? _scrollLateSettleTimer;
   Timer? _searchDebounceTimer;
   Timer? _highlightPulseTimer;
+  ShakeDetector? _shakeDetector;
   double? _lastScrollPixels;
   bool _isRestoringDraft = false;
   bool _draftRestored = false;
@@ -218,10 +224,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _promptController.addListener(_onPromptChanged);
     _scrollController.addListener(_handleListScroll);
     _restoreLastSession();
+    _initShakeDetector();
     unawaited(_restoreComposerDraftIfNeeded());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduleJumpToLatest(force: true);
     });
+  }
+
+  void _initShakeDetector() {
+    _shakeDetector = ShakeDetector.autoStart(
+      onPhoneShake: () {
+        final generationState = ref.read(generationProvider);
+        final lastFailed = generationState.lastFailedMessage;
+        if (lastFailed != null) {
+          HapticService.medium();
+          _retry(lastFailed);
+        }
+      },
+      shakeThresholdGravity: 2.0,
+    );
+    // Initialize home widget service
+    unawaited(HomeWidgetService.initialize());
   }
 
   @override
@@ -232,6 +255,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _scrollLateSettleTimer?.cancel();
     _searchDebounceTimer?.cancel();
     _highlightPulseTimer?.cancel();
+    _shakeDetector?.stopListening();
     _promptController.removeListener(_onPromptChanged);
     _scrollController.removeListener(_handleListScroll);
     WidgetsBinding.instance.removeObserver(this);
@@ -1478,6 +1502,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
+  Future<void> _onShareMessageImage(ChatMessage msg) async {
+    final bytes = await _resolveMessageImageBytes(msg);
+    if (!mounted) return;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('无法读取图片数据'))),
+      );
+      return;
+    }
+    final config = ref.read(apiConfigProvider);
+    final success = await ShareService.shareImage(
+      imageBytes: bytes,
+      text: msg.prompt,
+      subject: 'Nano Banana Generated Image',
+      fileName: 'NanoBanana_${DateTime.now().millisecondsSinceEpoch}.png',
+      signature: config.shareSignature.isEmpty ? null : config.shareSignature,
+    );
+    if (!mounted) return;
+    if (success) {
+      _showConfiguredSnackBar(_tr('图片已分享'));
+    } else {
+      _showConfiguredSnackBar(_tr('分享失败'));
+    }
+  }
+
+  Future<void> _onPreviewMessageImage(ChatMessage msg) async {
+    final bytes = await _resolveMessageImageBytes(msg);
+    if (!mounted) return;
+    if (bytes == null || bytes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('无法读取图片数据'))),
+      );
+      return;
+    }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ImagePreviewPage(
+          imageBytes: bytes,
+          heroTag: msg.id?.toString() ?? 'image_preview',
+          onShare: () => _onShareMessageImage(msg),
+          onSave: () => _saveMessageImage(msg),
+          shareLabel: _tr('分享'),
+          saveLabel: _tr('保存'),
+          closeLabel: _tr('关闭'),
+        ),
+      ),
+    );
+  }
+
   Future<void> _saveMessageImage(ChatMessage message) async {
     final bytes = await _resolveMessageImageBytes(message);
     if (!mounted) return;
@@ -1957,6 +2031,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         copyPromptLabel: _tr('复制提示词'),
         retryLabel: _tr('重试'),
         saveImageLabel: canSaveImage ? _tr('保存图片') : null,
+        shareLabel: canReuseGenerated ? _tr('分享') : null,
         reuseReferencesLabel:
             msg.referenceImagePaths.isNotEmpty ? _tr('复用参考图') : null,
         reuseGeneratedImageLabel:
@@ -1968,6 +2043,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
         onRetry: () => _retry(msg),
         onSaveImage: canSaveImage ? () => _saveMessageImage(msg) : null,
+        onShare: canReuseGenerated ? () => _onShareMessageImage(msg) : null,
         onReuseReferences: msg.referenceImagePaths.isNotEmpty
             ? () => _reuseMessageReferences(msg)
             : null,
@@ -2185,6 +2261,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     return HomeMessageImage(
       imageUrl: msg.imageUrl,
       imageBytes: msg.imageBytes,
+      heroTag: msg.id?.toString(),
+      onTap: () => _onPreviewMessageImage(msg),
     );
   }
 
@@ -2230,6 +2308,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       draggingReferenceIndex: _draggingReferenceIndex,
       tr: _tr,
       imageUiKeyBuilder: _referenceImageUiKey,
+      hapticFeedbackEnabled: config.hapticFeedbackEnabled,
       onReorder: _reorderReferenceImages,
       onReorderStart: (index) {
         if (!mounted) return;

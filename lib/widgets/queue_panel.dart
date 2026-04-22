@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/generation_queue_task.dart';
+import '../services/haptic_service.dart';
 
 class QueuePanel extends StatelessWidget {
   const QueuePanel({
@@ -19,6 +21,7 @@ class QueuePanel extends StatelessWidget {
     required this.onMoveDown,
     required this.onDuplicateTask,
     required this.onEditPrompt,
+    this.hapticFeedbackEnabled = true,
   });
 
   final List<GenerationQueueTask> queue;
@@ -35,6 +38,31 @@ class QueuePanel extends StatelessWidget {
   final void Function(GenerationQueueTask task) onMoveDown;
   final void Function(GenerationQueueTask task) onDuplicateTask;
   final void Function(GenerationQueueTask task) onEditPrompt;
+  final bool hapticFeedbackEnabled;
+
+  void _hapticLight() {
+    if (hapticFeedbackEnabled) {
+      HapticFeedback.lightImpact();
+    }
+  }
+
+  void _hapticQueueAction() {
+    if (hapticFeedbackEnabled) {
+      HapticService.queueAction();
+    }
+  }
+
+  void _hapticMoveToTop() {
+    if (hapticFeedbackEnabled) {
+      HapticService.moveToTop();
+    }
+  }
+
+  void _hapticDelete() {
+    if (hapticFeedbackEnabled) {
+      HapticService.delete();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -160,9 +188,15 @@ class QueuePanel extends StatelessWidget {
                                 children: [
                                   Row(
                                     children: [
-                                      Chip(
-                                        label: Text(queueStatusText(task.status)),
-                                        visualDensity: VisualDensity.compact,
+                                      AnimatedContainer(
+                                        duration: const Duration(milliseconds: 200),
+                                        child: Chip(
+                                          label: Text(queueStatusText(task.status)),
+                                          visualDensity: VisualDensity.compact,
+                                          backgroundColor: isRunning
+                                              ? Theme.of(context).colorScheme.primaryContainer
+                                              : null,
+                                        ),
                                       ),
                                       const SizedBox(width: 8),
                                       if (task.fromRetry)
@@ -172,7 +206,10 @@ class QueuePanel extends StatelessWidget {
                                         ),
                                       const Spacer(),
                                       IconButton(
-                                        onPressed: () => onCancelTask(task),
+                                        onPressed: () {
+                                          _hapticDelete();
+                                          onCancelTask(task);
+                                        },
                                         icon: Icon(
                                           isRunning ? Icons.stop_circle : Icons.cancel,
                                         ),
@@ -193,31 +230,51 @@ class QueuePanel extends StatelessWidget {
                                   Row(
                                     children: [
                                       IconButton(
-                                        onPressed:
-                                            canMoveToFront ? () => onMoveToFront(task) : null,
+                                        onPressed: canMoveToFront
+                                            ? () {
+                                                _hapticMoveToTop();
+                                                onMoveToFront(task);
+                                              }
+                                            : null,
                                         icon: const Icon(Icons.vertical_align_top),
                                         tooltip: tr('置顶（下一位执行）'),
                                       ),
                                       IconButton(
-                                        onPressed: canMoveUp ? () => onMoveUp(task) : null,
+                                        onPressed: canMoveUp
+                                            ? () {
+                                                _hapticQueueAction();
+                                                onMoveUp(task);
+                                              }
+                                            : null,
                                         icon: const Icon(Icons.arrow_upward),
                                         tooltip: tr('上移'),
                                       ),
                                       IconButton(
-                                        onPressed:
-                                            canMoveDown ? () => onMoveDown(task) : null,
+                                        onPressed: canMoveDown
+                                            ? () {
+                                                _hapticQueueAction();
+                                                onMoveDown(task);
+                                              }
+                                            : null,
                                         icon: const Icon(Icons.arrow_downward),
                                         tooltip: tr('下移'),
                                       ),
                                       IconButton(
-                                        onPressed: () => onDuplicateTask(task),
+                                        onPressed: () {
+                                          _hapticQueueAction();
+                                          onDuplicateTask(task);
+                                        },
                                         icon: const Icon(Icons.copy_all),
                                         tooltip: tr('重复'),
                                       ),
                                       const Spacer(),
                                       TextButton(
-                                        onPressed:
-                                            isRunning ? null : () => onEditPrompt(task),
+                                        onPressed: isRunning
+                                            ? null
+                                            : () {
+                                                _hapticLight();
+                                                onEditPrompt(task);
+                                              },
                                         child: Text(tr('编辑提示词')),
                                       ),
                                     ],

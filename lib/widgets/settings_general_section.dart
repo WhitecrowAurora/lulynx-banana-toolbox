@@ -2,6 +2,7 @@
 
 import '../models/api_config.dart';
 import 'settings_account_balance_card.dart';
+import 'settings_interaction_card.dart';
 
 class SettingsGeneralSection extends StatelessWidget {
   const SettingsGeneralSection({
@@ -17,6 +18,11 @@ class SettingsGeneralSection extends StatelessWidget {
     required this.languageHelper,
     required this.snackBarLabel,
     required this.snackBarHelper,
+    required this.hapticFeedbackTitle,
+    required this.hapticFeedbackSubtitle,
+    required this.shareSignatureLabel,
+    required this.shareSignatureHint,
+    required this.interactionSectionTitle,
     required this.quota,
     required this.quotaError,
     required this.isLoadingQuota,
@@ -24,6 +30,8 @@ class SettingsGeneralSection extends StatelessWidget {
     required this.onShowBalanceChanged,
     required this.onAppLanguageChanged,
     required this.onSnackBarPositionChanged,
+    required this.onHapticFeedbackChanged,
+    required this.onShareSignatureChanged,
     required this.translate,
   });
 
@@ -38,6 +46,11 @@ class SettingsGeneralSection extends StatelessWidget {
   final String languageHelper;
   final String snackBarLabel;
   final String snackBarHelper;
+  final String hapticFeedbackTitle;
+  final String hapticFeedbackSubtitle;
+  final String shareSignatureLabel;
+  final String shareSignatureHint;
+  final String interactionSectionTitle;
   final double? quota;
   final String? quotaError;
   final bool isLoadingQuota;
@@ -45,6 +58,8 @@ class SettingsGeneralSection extends StatelessWidget {
   final ValueChanged<bool> onShowBalanceChanged;
   final ValueChanged<String> onAppLanguageChanged;
   final ValueChanged<String> onSnackBarPositionChanged;
+  final ValueChanged<bool> onHapticFeedbackChanged;
+  final ValueChanged<String> onShareSignatureChanged;
   final String Function(String) translate;
 
   @override
@@ -109,6 +124,18 @@ class SettingsGeneralSection extends StatelessWidget {
             if (value == null || value.isEmpty) return;
             onSnackBarPositionChanged(value);
           },
+        ),
+        const SizedBox(height: 20),
+        SettingsInteractionCard(
+          hapticFeedbackEnabled: config.hapticFeedbackEnabled,
+          shareSignature: config.shareSignature,
+          sectionTitle: interactionSectionTitle,
+          hapticFeedbackTitle: hapticFeedbackTitle,
+          hapticFeedbackSubtitle: hapticFeedbackSubtitle,
+          shareSignatureLabel: shareSignatureLabel,
+          shareSignatureHint: shareSignatureHint,
+          onHapticFeedbackChanged: onHapticFeedbackChanged,
+          onShareSignatureChanged: onShareSignatureChanged,
         ),
       ],
     );

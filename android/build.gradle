@@ -6,11 +6,61 @@ allprojects {
 }
 
 rootProject.buildDir = "../build"
-subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
+subprojects { subproject ->
+    subproject.buildDir = "${rootProject.buildDir}/${subproject.name}"
 }
-subprojects {
-    project.evaluationDependsOn(":app")
+
+def ensureAndroidNamespace = { Project project ->
+    def androidExt = project.extensions.findByName("android")
+    if (androidExt == null || !androidExt.hasProperty("namespace")) {
+        return
+    }
+
+    def currentNamespace = androidExt.namespace?.toString()?.trim()
+    if (currentNamespace) {
+        return
+    }
+
+    def manifestFile = project.file("src/main/AndroidManifest.xml")
+    def manifestNamespace = null
+    if (manifestFile.exists()) {
+        def manifestText = manifestFile.getText("UTF-8")
+        def matcher = manifestText =~ /package\s*=\s*"([^"]+)"/
+        if (matcher.find()) {
+            manifestNamespace = matcher.group(1)
+        }
+    }
+
+    def fallbackNamespace = project.group?.toString()?.trim()
+    androidExt.namespace = manifestNamespace ?: fallbackNamespace
+}
+
+def forceKotlinJvmTarget = { Project project, String jvmTarget ->
+    project.tasks.configureEach { task ->
+        if (task.hasProperty("kotlinOptions")) {
+            task.kotlinOptions.jvmTarget = jvmTarget
+        }
+    }
+}
+
+subprojects { subproject ->
+    subproject.plugins.withId("com.android.application") {
+        ensureAndroidNamespace(subproject)
+    }
+    subproject.plugins.withId("com.android.library") {
+        ensureAndroidNamespace(subproject)
+    }
+    subproject.plugins.withId("kotlin-android") {
+        if (subproject.name == "sensors_plus") {
+            forceKotlinJvmTarget(subproject, JavaVersion.VERSION_1_8.toString())
+        }
+    }
+    subproject.plugins.withId("org.jetbrains.kotlin.android") {
+        if (subproject.name == "sensors_plus") {
+            forceKotlinJvmTarget(subproject, JavaVersion.VERSION_1_8.toString())
+        }
+    }
+    subproject.evaluationDependsOn(":app")
 }
 
 tasks.register("clean", Delete) {

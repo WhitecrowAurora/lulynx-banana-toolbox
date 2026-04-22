@@ -12,6 +12,8 @@ class StorageService {
   static const _apiKeyEncodeMarker = 'v1:';
   static const _apiKeyObfuscationSeed = 'nano_banana_local_seed_2026';
   static const _queueSnapshotFileName = 'generation_queue_v1.json';
+  static const _generationStatsKey = 'generation_time_stats_v1';
+  static const _maxStatsHistory = 50; // Keep last 50 records per type
 
   Future<ApiConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -165,5 +167,145 @@ class StorageService {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  // ========== Generation Time Statistics ==========
+
+  /// Record a generation time for statistics
+  Future<void> recordGenerationTime({
+    required bool hasReferenceImages,
+    required int durationMs,
+    required bool success,
+  }) async {
+    if (!success || durationMs <= 0) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final type = hasReferenceImages ? 'with_refs' : 'text_only';
+    final key = '${_generationStatsKey}_$type';
+
+    try {
+      final existing = prefs.getStringList(key) ?? [];
+      final record = '${DateTime.now().millisecondsSinceEpoch}:$durationMs';
+
+      // Keep only last _maxStatsHistory records
+      final updated = [...existing, record];
+      if (updated.length > _maxStatsHistory) {
+        updated.removeAt(0);
+      }
+
+      await prefs.setStringList(key, updated);
+    } catch (_) {
+      // Ignore storage errors
+    }
+  }
+
+  /// Get estimated generation time based on historical data
+  /// Returns estimated seconds with weighted average (recent records have higher weight)
+  Future<int> getEstimatedGenerationTime(bool hasReferenceImages) async {
+    final prefs = await SharedPreferences.getInstance();
+    final type = hasReferenceImages ? 'with_refs' : 'text_only';
+    final key = '${_generationStatsKey}_$type';
+
+    try {
+      final records = prefs.getStringList(key);
+      if (records == null || records.isEmpty) {
+        // No historical data, return default estimates
+        return hasReferenceImages ? 35 : 22;
+      }
+
+      // Parse records and calculate weighted average
+      // More recent records get higher weight
+      var totalWeight = 0.0;
+      var weightedSum = 0.0;
+
+      for (var i = 0; i < records.length; i++) {
+        final parts = records[i].split(':');
+        if (parts.length != 2) continue;
+
+        final durationMs = int.tryParse(parts[1]);
+        if (durationMs == null || durationMs <= 0) continue;
+
+        // Weight: recent records have higher weight
+        // Linear weight from 1.0 (oldest) to 2.0 (newest)
+        final weight = 1.0 + (i / records.length);
+        totalWeight += weight;
+        weightedSum += durationMs * weight;
+      }
+
+      if (totalWeight == 0) {
+        return hasReferenceImages ? 35 : 22;
+      }
+
+      // Convert to seconds and round
+      final avgMs = weightedSum / totalWeight;
+      final avgSeconds = (avgMs / 1000).round();
+
+      // Clamp to reasonable bounds
+      final minSeconds = hasReferenceImages ? 10 : 5;
+      final maxSeconds = hasReferenceImages ? 180 : 120;
+      return avgSeconds.clamp(minSeconds, maxSeconds);
+    } catch (_) {
+      return hasReferenceImages ? 35 : 22;
+    }
+  }
+
+  /// Get statistics summary for display
+  Future<Map<String, dynamic>> getGenerationStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    final result = <String, dynamic>{};
+
+    for (final type in ['text_only', 'with_refs']) {
+      final key = '${_generationStatsKey}_$type';
+      final records = prefs.getStringList(key);
+
+      if (records == null || records.isEmpty) {
+        result[type] = {
+          'count': 0,
+          'avgSeconds': type == 'with_refs' ? 35 : 22,
+          'minSeconds': null,
+          'maxSeconds': null,
+        };
+        continue;
+      }
+
+      final durations = <int>[];
+      for (final record in records) {
+        final parts = record.split(':');
+        if (parts.length != 2) continue;
+        final durationMs = int.tryParse(parts[1]);
+        if (durationMs != null && durationMs > 0) {
+          durations.add((durationMs / 1000).round());
+        }
+      }
+
+      if (durations.isEmpty) {
+        result[type] = {
+          'count': 0,
+          'avgSeconds': type == 'with_refs' ? 35 : 22,
+          'minSeconds': null,
+          'maxSeconds': null,
+        };
+        continue;
+      }
+
+      durations.sort();
+      result[type] = {
+        'count': durations.length,
+        'avgSeconds': durations.reduce((a, b) => a + b) ~/ durations.length,
+        'minSeconds': durations.first,
+        'maxSeconds': durations.last,
+        'medianSeconds': durations[durations.length ~/ 2],
+      };
+    }
+
+    return result;
+  }
+
+  /// Clear all generation statistics
+  Future<void> clearGenerationStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final type in ['text_only', 'with_refs']) {
+      await prefs.remove('${_generationStatsKey}_$type');
+    }
   }
 }

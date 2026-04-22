@@ -31,8 +31,8 @@ import '../widgets/settings_backup_actions.dart';
 import '../widgets/settings_request_retry_section.dart';
 import '../widgets/settings_reference_images_section.dart';
 import '../widgets/settings_quality_preview_card.dart';
-import '../widgets/settings_section_header.dart';
 import '../widgets/settings_stat_row.dart';
+import '../widgets/statistics_detail_page.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -76,7 +76,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _modelLoadError;
   DateTime? _modelListUpdatedAt;
   String _modelListConfigKey = '';
-  String _appVersionLabel = 'v1.6.5';
+  String _appVersionLabel = 'v1.6.7';
   bool _isCheckingUpdate = false;
   bool _isDownloadingUpdate = false;
   String? _updateStatus;
@@ -1264,6 +1264,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             languageHelper: tr('选择应用显示语言'),
             snackBarLabel: tr('Save toast position'),
             snackBarHelper: tr('Show save result toast at top or bottom'),
+            hapticFeedbackTitle: tr('震动反馈'),
+            hapticFeedbackSubtitle: tr('启用触觉反馈提升交互体验'),
+            shareSignatureLabel: tr('分享签名'),
+            shareSignatureHint: tr('设置分享图片时的个性签名'),
+            interactionSectionTitle: tr('交互设置'),
             quota: _quota,
             quotaError: _quotaError,
             isLoadingQuota: _isLoadingQuota,
@@ -1271,6 +1276,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onShowBalanceChanged: notifier.setShowBalanceOnHome,
             onAppLanguageChanged: notifier.setAppLanguage,
             onSnackBarPositionChanged: notifier.setSnackBarPosition,
+            onHapticFeedbackChanged: notifier.setHapticFeedbackEnabled,
+            onShareSignatureChanged: notifier.setShareSignature,
             translate: tr,
           ),
           SettingsApiConnectionSection(
@@ -1299,47 +1306,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onViewResult: _showTestResult,
           ),
           const SizedBox(height: 24),
-          const SizedBox(height: 24),
-          _buildSectionHeader(tr('Provider & Model')),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: config.providerId,
-            decoration: const InputDecoration(
-              labelText: 'Provider',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.hub_outlined),
-            ),
-            items: ApiConfig.availableProviders.map((provider) {
-              return DropdownMenuItem(
-                value: provider['id'],
-                child: Text(provider['name']!),
-              );
-            }).toList(),
-            onChanged: (value) {
-              if (value != null) notifier.setProviderId(value);
-            },
-          ),
-          const SizedBox(height: 16),
-          DropdownButtonFormField<String>(
-            value: selectedModelValue,
-            decoration: InputDecoration(
-              labelText: tr('模型'),
-              helperText: _remoteModelItems.isNotEmpty
-                  ? tr('仅显示 banana 系列模型')
-                  : tr('当前使用本地模型列表'),
-              border: const OutlineInputBorder(),
-              prefixIcon: const Icon(Icons.auto_awesome),
-            ),
-            items: modelItems.map((model) {
-              return DropdownMenuItem(
-                value: model['id'],
-                child: Text(model['name'] ?? model['id'] ?? ''),
-              );
-            }).toList(),
-            onChanged: (value) {
-              if (value != null) notifier.setModel(value);
-            },
-          ),
           SettingsProviderModelSection(
             title: tr('Provider & Model'),
             providerValue: config.providerId,
@@ -1615,6 +1581,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       '${stats.successRate.toStringAsFixed(1)}%',
                     ),
                     _buildStatRow(tr('平均耗时'), '${stats.avgDurationMs} ms'),
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: () => _showDetailedStats(context, stats),
+                      icon: const Icon(Icons.analytics_outlined),
+                      label: Text(tr('查看详细统计')),
+                    ),
                   ],
                 ),
                 loading: () => const Center(
@@ -1637,13 +1609,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               appName: "Lulynx's Nano Banana Toolbox",
               version: _appVersionLabel,
               copyrightTitle: tr('版权声明'),
-              copyrightText: tr('Copyright (C) 2026 Lulu (Ruilynx). All rights reserved.'),
+              copyrightText: tr(
+                'Copyright (C) 2026 Lulu (Ruilynx). Released under the GNU GPL v3.',
+              ),
               thanksText: tr('Thanks Longyin and Lianz for bug testing to speed up development.'),
               licenseRows: [
-                tr('Personal use only'),
-                tr('禁止以任何形式出售、转卖或商业使用'),
-                tr('Do not repackage for distribution'),
-                tr('本软件永久免费，如有收费均为诈骗'),
+                tr('Open source under GPL-3.0'),
+                tr('You may copy, modify, and redistribute under the license'),
+                tr('Please keep the license and copyright notices intact'),
+                tr('Provided as-is without warranty'),
               ],
               checkUpdateLabel: tr('检查更新'),
               onCheckUpdate: _checkForUpdates,
@@ -1686,12 +1660,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildSectionHeader(String title) {
-    return SettingsSectionHeader(title: title);
-  }
-
   Widget _buildStatRow(String key, String value) {
     return SettingsStatRow(label: key, value: value);
+  }
+
+  void _showDetailedStats(BuildContext context, UsageStats stats) {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (context) => StatisticsDetailPage(
+          totalCount: stats.totalCount,
+          successCount: stats.successCount,
+          failureCount: stats.failureCount,
+          successRate: stats.successRate,
+          avgDurationMs: stats.avgDurationMs,
+          todayCount: stats.todayCount,
+          thisWeekCount: stats.thisWeekCount,
+          thisMonthCount: stats.thisMonthCount,
+          dailyAverage: stats.dailyAverage,
+          busiestHour: stats.busiestHour,
+          preferredModel: stats.preferredModel,
+          preferredAspectRatio: stats.preferredAspectRatio,
+          totalTokensUsed: stats.totalTokensUsed,
+        ),
+      ),
+    );
   }
 }
 

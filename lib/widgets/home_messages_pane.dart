@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 class HomeMessagesPane extends StatelessWidget {
   const HomeMessagesPane({
@@ -24,39 +24,66 @@ class HomeMessagesPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Stack(
       children: [
-        NotificationListener<UserScrollNotification>(
-          onNotification: onScrollNotification,
-          child: ListView.builder(
-            controller: scrollController,
-            padding: const EdgeInsets.all(12),
-            itemCount: messagesCount,
-            itemBuilder: itemBuilder,
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                colorScheme.surface,
+              ],
+            ),
+          ),
+          child: NotificationListener<UserScrollNotification>(
+            onNotification: onScrollNotification,
+            child: ListView.builder(
+              controller: scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              itemCount: messagesCount,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: itemBuilder(context, index),
+                );
+              },
+            ),
           ),
         ),
         Positioned(
-          right: 12,
-          bottom: 12,
+          right: 20,
+          bottom: 20,
           child: AnimatedSlide(
-            duration: const Duration(milliseconds: 220),
+            duration: const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
-            offset: showJumpToLatest ? Offset.zero : const Offset(0, 0.35),
+            offset: showJumpToLatest ? Offset.zero : const Offset(0, 0.4),
             child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
+              duration: const Duration(milliseconds: 200),
               curve: Curves.easeOutCubic,
               opacity: showJumpToLatest ? 1 : 0,
               child: AnimatedScale(
-                duration: const Duration(milliseconds: 180),
+                duration: const Duration(milliseconds: 200),
                 curve: Curves.easeOutBack,
-                scale: showJumpToLatest ? 1 : 0.86,
+                scale: showJumpToLatest ? 1 : 0.8,
                 child: IgnorePointer(
                   ignoring: !showJumpToLatest,
-                  child: FloatingActionButton.small(
-                    heroTag: 'jump_latest_fab',
-                    onPressed: onJumpToLatest,
-                    tooltip: jumpToLatestTooltip,
-                    child: const Icon(Icons.arrow_downward),
+                  child: Material(
+                    elevation: 6,
+                    shadowColor: colorScheme.primary.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(16),
+                    child: FloatingActionButton.small(
+                      heroTag: 'jump_latest_fab',
+                      elevation: 0,
+                      backgroundColor: colorScheme.primaryContainer,
+                      foregroundColor: colorScheme.onPrimaryContainer,
+                      onPressed: onJumpToLatest,
+                      tooltip: jumpToLatestTooltip,
+                      child: const Icon(Icons.arrow_downward),
+                    ),
                   ),
                 ),
               ),
@@ -64,7 +91,7 @@ class HomeMessagesPane extends StatelessWidget {
           ),
         ),
         if (searchNavigator != null)
-          Positioned(right: 12, bottom: 12, child: searchNavigator!),
+          Positioned(right: 20, bottom: 20, child: searchNavigator!),
       ],
     );
   }

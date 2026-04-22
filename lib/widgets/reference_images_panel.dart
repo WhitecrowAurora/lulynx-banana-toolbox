@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../services/haptic_service.dart';
+
 class ReferenceImagesPanel extends StatelessWidget {
   const ReferenceImagesPanel({
     super.key,
@@ -15,6 +17,7 @@ class ReferenceImagesPanel extends StatelessWidget {
     required this.onReorderEnd,
     required this.onRemoveReference,
     required this.onClearReferences,
+    this.hapticFeedbackEnabled = true,
   });
 
   final List<Uint8List> referenceImages;
@@ -27,6 +30,19 @@ class ReferenceImagesPanel extends StatelessWidget {
   final void Function(int index) onReorderEnd;
   final void Function(int index) onRemoveReference;
   final VoidCallback onClearReferences;
+  final bool hapticFeedbackEnabled;
+
+  void _hapticDragStart() {
+    if (hapticFeedbackEnabled) {
+      HapticService.dragStart();
+    }
+  }
+
+  void _hapticDragEnd() {
+    if (hapticFeedbackEnabled) {
+      HapticService.dragEnd();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,8 +115,14 @@ class ReferenceImagesPanel extends StatelessWidget {
                 itemCount: referenceImages.length,
                 padding: EdgeInsets.zero,
                 onReorder: onReorder,
-                onReorderStart: onReorderStart,
-                onReorderEnd: onReorderEnd,
+                onReorderStart: (index) {
+                  _hapticDragStart();
+                  onReorderStart(index);
+                },
+                onReorderEnd: (index) {
+                  _hapticDragEnd();
+                  onReorderEnd(index);
+                },
                 proxyDecorator: (child, _, animation) {
                   return AnimatedBuilder(
                     animation: animation,

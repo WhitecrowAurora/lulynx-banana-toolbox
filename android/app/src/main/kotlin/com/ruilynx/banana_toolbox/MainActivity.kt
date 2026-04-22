@@ -69,6 +69,47 @@ class MainActivity: FlutterActivity() {
                         result.success(true)
                     }
 
+                    "updateGenerationStatus" -> {
+                        val status = call.argument<String>("status") ?: "idle"
+                        val queueCount = call.argument<Int>("queueCount") ?: 0
+                        val progress = call.argument<Int>("progress") ?: 0
+                        val message = call.argument<String>("message") ?: ""
+                        updateGenerationStatus(status, queueCount, progress, message)
+                        result.success(true)
+                    }
+
+                    "showFloatingWindow" -> {
+                        val status = call.argument<String>("status") ?: "idle"
+                        val queueCount = call.argument<Int>("queueCount") ?: 0
+                        val progress = call.argument<Int>("progress") ?: 0
+                        val estimatedSeconds = call.argument<Int>("estimatedSeconds")
+                        showFloatingWindow(status, queueCount, progress, estimatedSeconds)
+                        result.success(true)
+                    }
+
+                    "updateFloatingWindow" -> {
+                        val status = call.argument<String>("status") ?: "idle"
+                        val queueCount = call.argument<Int>("queueCount") ?: 0
+                        val progress = call.argument<Int>("progress") ?: 0
+                        val estimatedSeconds = call.argument<Int>("estimatedSeconds")
+                        updateFloatingWindow(status, queueCount, progress, estimatedSeconds)
+                        result.success(true)
+                    }
+
+                    "hideFloatingWindow" -> {
+                        hideFloatingWindow()
+                        result.success(true)
+                    }
+
+                    "canShowFloatingWindow" -> {
+                        result.success(FloatingWindowManager.canShow(this))
+                    }
+
+                    "requestFloatingWindowPermission" -> {
+                        FloatingWindowManager.requestPermission(this)
+                        result.success(true)
+                    }
+
                     "isIgnoringBatteryOptimizations" -> {
                         result.success(isIgnoringBatteryOptimizations())
                     }
@@ -168,6 +209,43 @@ class MainActivity: FlutterActivity() {
             action = KeepAliveForegroundService.ACTION_STOP
         }
         startService(intent)
+    }
+
+    private fun updateGenerationStatus(status: String, queueCount: Int, progress: Int, message: String) {
+        val intent = Intent(this, KeepAliveForegroundService::class.java).apply {
+            action = KeepAliveForegroundService.ACTION_UPDATE
+            putExtra(KeepAliveForegroundService.EXTRA_STATUS, status)
+            putExtra(KeepAliveForegroundService.EXTRA_QUEUE_COUNT, queueCount)
+            putExtra(KeepAliveForegroundService.EXTRA_CURRENT_PROGRESS, progress)
+            putExtra(KeepAliveForegroundService.EXTRA_MESSAGE, message)
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun showFloatingWindow(status: String, queueCount: Int, progress: Int, estimatedSeconds: Int?) {
+        FloatingWindowManager.show(
+            this,
+            queueCount,
+            progress,
+            status,
+            estimatedSeconds,
+            onPause = { /* TODO: Implement pause callback */ },
+            onCancel = { /* TODO: Implement cancel callback */ }
+        )
+    }
+
+    private fun updateFloatingWindow(status: String, queueCount: Int, progress: Int, estimatedSeconds: Int?) {
+        FloatingWindowManager.update(
+            this,
+            queueCount,
+            progress,
+            status,
+            estimatedSeconds
+        )
+    }
+
+    private fun hideFloatingWindow() {
+        FloatingWindowManager.hide()
     }
 
     private fun isIgnoringBatteryOptimizations(): Boolean {

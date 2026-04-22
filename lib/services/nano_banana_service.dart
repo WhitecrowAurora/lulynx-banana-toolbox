@@ -432,6 +432,21 @@ class NanoBananaService {
     String? idempotencyKey,
     int degradeLevel = 0,
   }) async {
+    final adapter = resolveProviderAdapter(_config.providerId);
+
+    // 如果 Provider 支持 multipart image edits，使用专门的 edits 端点
+    if (adapter.supportsMultipartImageEdits) {
+      return _generateMultipartImageEdits(
+        prompt: prompt,
+        referenceImages: referenceImages,
+        timeout: timeout,
+        cancelToken: cancelToken,
+        idempotencyKey: idempotencyKey,
+        degradeLevel: degradeLevel,
+      );
+    }
+
+    // 原有的 NanoBanana 兼容方式（JSON + base64）
     final preparedImages = _prepareReferenceImages(
       referenceImages,
       degradeLevel: degradeLevel,
@@ -495,6 +510,130 @@ class NanoBananaService {
     final key = (base ?? '').trim();
     if (key.isEmpty) return null;
     return '$key-s$stage';
+  }
+
+  Future<GenerationResult> _generateMultipartImageEdits({
+    required String prompt,
+    required List<Uint8List> referenceImages,
+    Duration? timeout,
+    CancelToken? cancelToken,
+    String? idempotencyKey,
+    int degradeLevel = 0,
+  }) async {
+    if (!_config.isValid) {
+      return GenerationResult.error(
+        '请先配置 API 端点和 Key',
+        errorCode: 'invalid_config',
+      );
+    }
+    if (_isHttpsRequiredButInvalid) {
+      return GenerationResult.error(
+        '已启用 HTTPS 强制，请使用 https:// 开头的 API 端点',
+        errorCode: 'https_required',
+      );
+    }
+
+    final adapter = resolveProviderAdapter(_config.providerId);
+    if (!adapter.supportsMultipartImageEdits) {
+      return GenerationResult.error(
+        '当前 Provider 不支持 multipart image edits',
+        errorCode: 'not_supported',
+      );
+    }
+
+    final editsUrl = adapter.imageEditsPath(_config);
+    if (editsUrl == null || editsUrl.isEmpty) {
+      return GenerationResult.error(
+        '当前 Provider 未配置 edits 端点',
+        errorCode: 'no_edits_endpoint',
+      );
+    }
+
+    // 预处理参考图片
+    final preparedImages = _prepareReferenceImages(
+      referenceImages,
+      degradeLevel: degradeLevel,
+    );
+
+    // 生成文件名
+    int fileIndex = 0;
+    String generateFileName(Uint8List bytes) {
+      final ext = _sniffMimeType(bytes).split('/').last;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      return 'image_${timestamp}_${fileIndex++}.$ext';
+    }
+
+    final formData = adapter.buildImageEditsRequest(
+      config: _config,
+      prompt: prompt,
+      referenceImages: preparedImages,
+      generateFileName: generateFileName,
+    );
+
+    if (formData == null) {
+      return GenerationResult.error(
+        '构建 multipart 请求失败',
+        errorCode: 'build_formdata_failed',
+      );
+    }
+
+    final debugInfo = StringBuffer();
+    debugInfo.writeln('========== Multipart Image Edits 请求调试 ==========');
+    debugInfo.writeln('URL: $editsUrl');
+    debugInfo.writeln('Provider: ${_config.providerId}');
+    debugInfo.writeln('Model: ${_config.model}');
+    debugInfo.writeln('Prompt: $prompt');
+    debugInfo.writeln('图片数量: ${preparedImages.length}');
+    debugInfo.writeln('====================================================');
+    debugPrint(debugInfo.toString());
+
+    try {
+      final options = Options(
+        headers: {
+          'Authorization': 'Bearer ${_config.apiKey}',
+          if ((idempotencyKey ?? '').trim().isNotEmpty)
+            'Idempotency-Key': idempotencyKey!.trim(),
+        },
+        sendTimeout: timeout,
+        receiveTimeout: timeout,
+      );
+
+      final response = await _dio.post(
+        editsUrl,
+        data: formData,
+        options: options,
+        cancelToken: cancelToken,
+      );
+
+      debugPrint('========== Multipart Image Edits 响应调试 ==========');
+      debugPrint('状态码: ${response.statusCode}');
+      debugPrint('响应数据: ${response.data}');
+      debugPrint('====================================================');
+
+      return adapter.parseImageResponse(response.data);
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.badResponse && e.response != null) {
+        final recovered = adapter.parseImageResponse(e.response?.data);
+        if (recovered.success) {
+          debugPrint(
+            '[compat] Non-2xx response carried image payload; treated as success. status=${e.response?.statusCode}',
+          );
+          return recovered;
+        }
+      }
+      final errorInfo = _buildErrorInfo(e);
+      debugPrint(errorInfo);
+      final mapped = _mapDioException(e, errorInfo);
+      return GenerationResult.error(
+        mapped.message,
+        errorCode: mapped.code,
+        retryable: mapped.retryable,
+      );
+    } catch (e, stackTrace) {
+      final errorMsg = '未知错误: $e\n堆栈: $stackTrace';
+      debugPrint(errorMsg);
+      return GenerationResult.error(errorMsg, errorCode: 'unknown');
+    }
   }
 
   Future<GenerationResult> _generate({

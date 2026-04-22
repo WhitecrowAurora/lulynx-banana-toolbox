@@ -13,6 +13,7 @@ import '../services/app_log_service.dart';
 import '../services/backup_service.dart';
 import '../services/chat_database_service.dart';
 import '../services/foreground_keep_alive_service.dart';
+import '../services/haptic_service.dart';
 import '../services/nano_banana_service.dart';
 import '../services/storage_service.dart';
 
@@ -24,6 +25,17 @@ final backupServiceProvider = Provider((ref) {
   final storage = ref.watch(storageServiceProvider);
   return BackupService(db: db, storage: storage);
 });
+
+/// Task run result helper class
+class _TaskRunResult {
+  final GenerationResult result;
+  final int retryCount;
+
+  _TaskRunResult({
+    required this.result,
+    required this.retryCount,
+  });
+}
 
 final apiConfigProvider =
     StateNotifierProvider<ApiConfigNotifier, ApiConfig>((ref) {
@@ -134,6 +146,14 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
 
   void setRetryJitterPercent(int value) =>
       updateConfig(state.copyWith(retryJitterPercent: value));
+
+  void setHapticFeedbackEnabled(bool enabled) {
+    HapticService.setEnabled(enabled);
+    updateConfig(state.copyWith(hapticFeedbackEnabled: enabled));
+  }
+
+  void setShareSignature(String signature) =>
+      updateConfig(state.copyWith(shareSignature: signature));
 
   void setBackgroundKeepAliveEnabled(bool enabled) =>
       updateConfig(state.copyWith(backgroundKeepAliveEnabled: enabled));
@@ -377,6 +397,7 @@ class GenerationState {
   final List<Uint8List> referenceImages;
   final List<GenerationQueueTask> queue;
   final String? activeTaskId;
+  final ChatMessage? lastFailedMessage;
 
   GenerationState({
     this.isLoading = false,
@@ -384,6 +405,7 @@ class GenerationState {
     this.referenceImages = const [],
     this.queue = const [],
     this.activeTaskId,
+    this.lastFailedMessage,
   });
 
   GenerationState copyWith({
@@ -392,8 +414,10 @@ class GenerationState {
     List<Uint8List>? referenceImages,
     List<GenerationQueueTask>? queue,
     String? activeTaskId,
+    ChatMessage? lastFailedMessage,
     bool clearActiveTaskId = false,
     bool clearResult = false,
+    bool clearLastFailed = false,
   }) {
     return GenerationState(
       isLoading: isLoading ?? this.isLoading,
@@ -402,6 +426,9 @@ class GenerationState {
       queue: queue ?? this.queue,
       activeTaskId:
           clearActiveTaskId ? null : (activeTaskId ?? this.activeTaskId),
+      lastFailedMessage: clearLastFailed
+          ? null
+          : (lastFailedMessage ?? this.lastFailedMessage),
     );
   }
 }
@@ -804,6 +831,14 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       await ForegroundKeepAliveService.startIfNeeded();
     }
 
+    // 显示灵动岛/悬浮窗初始状态
+    await ForegroundKeepAliveService.showFloatingWindow(
+      status: ForegroundKeepAliveService.statusRunning,
+      queueCount: state.queue.length,
+      progress: 0,
+      estimatedSeconds: await _estimateGenerationTime(state.queue.first.referenceImages.isNotEmpty),
+    );
+
     try {
       while (true) {
         final nextTask = _nextPendingTask();
@@ -875,6 +910,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
         _ref.read(sessionsProvider.notifier).loadSessions();
         _ref.invalidate(usageStatsProvider);
 
+        // 振动反馈：生成成功
+        await HapticService.success();
+
         await _log(
           level: result.success ? 'info' : 'error',
           message: result.success ? 'task success' : 'task failed',
@@ -885,6 +923,41 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
             'errorCode': result.errorCode,
           },
         );
+
+        // 记录成功生成的时间到统计
+        if (result.success) {
+          await _ref.read(storageServiceProvider).recordGenerationTime(
+            hasReferenceImages: nextTask.referenceImages.isNotEmpty,
+            durationMs: generationDurationMs,
+            success: true,
+          );
+        }
+
+        // 更新灵动岛/悬浮窗状态
+        if (result.success) {
+          await ForegroundKeepAliveService.updateGenerationStatus(
+            status: ForegroundKeepAliveService.statusSuccess,
+            queueCount: state.queue.length - 1,
+            progress: 100,
+          );
+          await ForegroundKeepAliveService.showFloatingWindow(
+            status: ForegroundKeepAliveService.statusSuccess,
+            queueCount: state.queue.length - 1,
+            progress: 100,
+          );
+        } else {
+          await ForegroundKeepAliveService.updateGenerationStatus(
+            status: ForegroundKeepAliveService.statusError,
+            queueCount: state.queue.length - 1,
+            progress: 0,
+            message: result.errorMessage ?? '生成失败',
+          );
+          await ForegroundKeepAliveService.showFloatingWindow(
+            status: ForegroundKeepAliveService.statusError,
+            queueCount: state.queue.length - 1,
+            progress: 0,
+          );
+        }
 
         state = state.copyWith(
           isLoading: false,
@@ -911,6 +984,22 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
             ? state.queue
             : state.queue.where((t) => t.id != activeTaskId).toList(),
       );
+
+      // 振动反馈：内部错误
+      await HapticService.error();
+
+      // 更新灵动岛为错误状态
+      await ForegroundKeepAliveService.updateGenerationStatus(
+        status: ForegroundKeepAliveService.statusError,
+        queueCount: state.queue.length,
+        progress: 0,
+        message: '内部错误',
+      );
+      await ForegroundKeepAliveService.showFloatingWindow(
+        status: ForegroundKeepAliveService.statusError,
+        queueCount: state.queue.length,
+        progress: 0,
+      );
     } finally {
       _isQueueProcessorRunning = false;
       final stillResident =
@@ -918,6 +1007,9 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
       if (keepAliveEnabled && !stillResident) {
         await ForegroundKeepAliveService.stopIfRunning();
       }
+      // 延迟隐藏悬浮窗
+      await Future.delayed(const Duration(seconds: 3));
+      await ForegroundKeepAliveService.hideFloatingWindow();
       unawaited(_persistQueueSnapshot());
     }
   }
@@ -1198,14 +1290,12 @@ class GenerationNotifier extends StateNotifier<GenerationState> {
     _taskSeed += 1;
     return '${DateTime.now().microsecondsSinceEpoch}_$_taskSeed';
   }
-}
 
-class _TaskRunResult {
-  final GenerationResult result;
-  final int retryCount;
+  /// 估算生成所需时间（秒），基于历史数据
+  Future<int> _estimateGenerationTime(bool hasReferenceImages) async {
+    return _ref
+        .read(storageServiceProvider)
+        .getEstimatedGenerationTime(hasReferenceImages);
+  }
 
-  _TaskRunResult({
-    required this.result,
-    required this.retryCount,
-  });
 }

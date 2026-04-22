@@ -1,5 +1,6 @@
 class ApiConfig {
   static const String autoAspectRatio = 'auto';
+  static const String providerGptImage2 = 'gpt_image_2';
   static const String providerNanoBananaCompatible = 'nano_banana_compatible';
 
   static const String referenceUploadModeAuto = 'auto';
@@ -57,12 +58,16 @@ class ApiConfig {
   final bool notificationResidentEnabled;
   final List<Map<String, String>> cachedBananaModels;
   final String cachedBananaModelsConfigKey;
+  final bool hapticFeedbackEnabled;
+  final String shareSignature;
   final int cachedBananaModelsFetchedAtMs;
 
   ApiConfig({
     required this.baseUrl,
     required this.apiKey,
     this.apiUserId = '',
+    this.hapticFeedbackEnabled = true,
+    this.shareSignature = '',
     this.providerId = providerNanoBananaCompatible,
     this.model = 'nano-banana',
     this.aspectRatio = '1:1',
@@ -99,7 +104,10 @@ class ApiConfig {
   bool get isValid => apiKey.isNotEmpty && baseUrl.isNotEmpty;
 
   bool get supportsImageSize =>
-      model == 'nano-banana-2' || model == 'gemini-3.1-flash-image-preview';
+      model == 'nano-banana-2' ||
+      model == 'gemini-3.1-flash-image-preview' ||
+      model == 'gpt-image-2' ||
+      model == 'gpt-image-2-edit';
 
   ApiConfig copyWith({
     String? baseUrl,
@@ -136,6 +144,8 @@ class ApiConfig {
     List<Map<String, String>>? cachedBananaModels,
     String? cachedBananaModelsConfigKey,
     int? cachedBananaModelsFetchedAtMs,
+    bool? hapticFeedbackEnabled,
+    String? shareSignature,
   }) {
     final normalizedBaseDelayMs = _normalizeRetryBaseDelayMs(
       retryBaseDelayMs ?? this.retryBaseDelayMs,
@@ -204,6 +214,8 @@ class ApiConfig {
           cachedBananaModelsConfigKey ?? this.cachedBananaModelsConfigKey,
       cachedBananaModelsFetchedAtMs:
           cachedBananaModelsFetchedAtMs ?? this.cachedBananaModelsFetchedAtMs,
+      hapticFeedbackEnabled: hapticFeedbackEnabled ?? this.hapticFeedbackEnabled,
+      shareSignature: shareSignature ?? this.shareSignature,
     );
   }
 
@@ -242,6 +254,8 @@ class ApiConfig {
         'cachedBananaModels': cachedBananaModels,
         'cachedBananaModelsConfigKey': cachedBananaModelsConfigKey,
         'cachedBananaModelsFetchedAtMs': cachedBananaModelsFetchedAtMs,
+        'hapticFeedbackEnabled': hapticFeedbackEnabled,
+        'shareSignature': shareSignature,
       };
 
   factory ApiConfig.fromJson(Map<String, dynamic> json) => ApiConfig(
@@ -301,6 +315,10 @@ class ApiConfig {
             json['cachedBananaModelsConfigKey']?.toString() ?? '',
         cachedBananaModelsFetchedAtMs:
             _toInt(json['cachedBananaModelsFetchedAtMs'], 0),
+        hapticFeedbackEnabled: json.containsKey('hapticFeedbackEnabled')
+            ? json['hapticFeedbackEnabled'] == true
+            : true,
+        shareSignature: json['shareSignature']?.toString() ?? '',
       );
 
   factory ApiConfig.empty() => ApiConfig(baseUrl: '', apiKey: '');
@@ -313,10 +331,13 @@ class ApiConfig {
       'id': 'gemini-3.1-flash-image-preview',
       'name': 'Gemini 3.1 Flash Image Preview',
     },
+    {'id': 'gpt-image-2', 'name': 'GPT Image 2'},
+    {'id': 'gpt-image-2-edit', 'name': 'GPT Image 2 (Edit)'},
   ];
 
   static const List<Map<String, String>> availableProviders = [
     {'id': providerNanoBananaCompatible, 'name': 'Nano Banana Compatible'},
+    {'id': providerGptImage2, 'name': 'GPT Image 2 (OpenAI 兼容)'},
   ];
 
   static const List<String> availableAspectRatios = [
