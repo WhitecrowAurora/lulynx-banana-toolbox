@@ -56,6 +56,7 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
   Future<void> _loadConfig() async {
     try {
       final config = await _storage.loadConfig();
+      HapticService.setEnabled(config.hapticFeedbackEnabled);
       state = config;
     } finally {
       if (!_loadedCompleter.isCompleted) {
@@ -65,6 +66,7 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
   }
 
   Future<void> updateConfig(ApiConfig config) async {
+    HapticService.setEnabled(config.hapticFeedbackEnabled);
     state = config;
     await _storage.saveConfig(config);
   }

@@ -4,6 +4,7 @@ import '../models/api_config.dart';
 import '../services/app_log_service.dart';
 import '../services/backup_service.dart';
 import '../services/chat_database_service.dart';
+import '../services/haptic_service.dart';
 import '../services/storage_service.dart';
 
 final storageServiceProvider = Provider((ref) => StorageService());
@@ -34,6 +35,7 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
   Future<void> _loadConfig() async {
     try {
       final config = await _storage.loadConfig();
+      HapticService.setEnabled(config.hapticFeedbackEnabled);
       state = config;
     } finally {
       if (!_loadedCompleter.isCompleted) {
@@ -43,6 +45,7 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
   }
 
   Future<void> updateConfig(ApiConfig config) async {
+    HapticService.setEnabled(config.hapticFeedbackEnabled);
     state = config;
     await _storage.saveConfig(config);
   }
@@ -131,8 +134,10 @@ class ApiConfigNotifier extends StateNotifier<ApiConfig> {
   void setNotificationResidentEnabled(bool enabled) =>
       updateConfig(state.copyWith(notificationResidentEnabled: enabled));
 
-  void setHapticFeedbackEnabled(bool enabled) =>
-      updateConfig(state.copyWith(hapticFeedbackEnabled: enabled));
+  void setHapticFeedbackEnabled(bool enabled) {
+    HapticService.setEnabled(enabled);
+    updateConfig(state.copyWith(hapticFeedbackEnabled: enabled));
+  }
 
   void setShareSignature(String signature) =>
       updateConfig(state.copyWith(shareSignature: signature));

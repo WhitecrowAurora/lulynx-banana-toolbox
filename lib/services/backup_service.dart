@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../models/api_config.dart';
+import '../models/api_profile.dart';
 import 'chat_database_service.dart';
 import 'storage_service.dart';
 
@@ -27,11 +28,13 @@ class BackupService {
 
   Future<String> createBackupFile() async {
     final config = await _storage.loadConfig();
+    final apiProfiles = await _storage.loadApiProfiles();
     final chatData = await _db.exportData();
     final data = {
       'schema': 1,
       'created_at': DateTime.now().toIso8601String(),
       'config': config.toJson(),
+      'api_profiles': apiProfiles.map((profile) => profile.toJson()).toList(),
       'chat': chatData,
     };
 
@@ -52,6 +55,16 @@ class BackupService {
     final configMap = Map<String, dynamic>.from(data['config'] as Map? ?? {});
     final config = ApiConfig.fromJson(configMap);
     await _storage.saveConfig(config);
+
+    final rawProfiles = data['api_profiles'];
+    if (rawProfiles is List) {
+      final profiles = <ApiProfile>[];
+      for (final item in rawProfiles) {
+        if (item is! Map) continue;
+        profiles.add(ApiProfile.fromJson(Map<String, dynamic>.from(item)));
+      }
+      await _storage.saveApiProfiles(profiles);
+    }
 
     final chat = Map<String, dynamic>.from(data['chat'] as Map? ?? {});
     await _db.importData(chat, overwrite: true);

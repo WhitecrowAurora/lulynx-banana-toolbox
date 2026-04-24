@@ -4,10 +4,12 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/api_config.dart';
+import '../models/api_profile.dart';
 import '../models/generation_queue_task.dart';
 
 class StorageService {
   static const _configKey = 'api_config';
+  static const _apiProfilesKey = 'api_profiles_v1';
   static const _lastSessionIdKey = 'last_session_id';
   static const _apiKeyEncodeMarker = 'v1:';
   static const _apiKeyObfuscationSeed = 'nano_banana_local_seed_2026';
@@ -59,6 +61,43 @@ class StorageService {
     final map = Map<String, dynamic>.from(config.toJson());
     map['apiKey'] = _encodeApiKey(config.apiKey);
     await prefs.setString(_configKey, jsonEncode(map));
+  }
+
+  Future<List<ApiProfile>> loadApiProfiles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_apiProfilesKey);
+    if (raw == null || raw.trim().isEmpty) return const <ApiProfile>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <ApiProfile>[];
+      final profiles = <ApiProfile>[];
+      for (final item in decoded) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final rawApiKey = map['apiKey']?.toString() ?? '';
+        if (rawApiKey.startsWith(_apiKeyEncodeMarker)) {
+          map['apiKey'] = _decodeApiKey(rawApiKey);
+        }
+        final profile = ApiProfile.fromJson(map);
+        if (profile.id.trim().isEmpty) continue;
+        profiles.add(profile);
+      }
+      return profiles;
+    } catch (_) {
+      return const <ApiProfile>[];
+    }
+  }
+
+  Future<void> saveApiProfiles(List<ApiProfile> profiles) async {
+    final prefs = await SharedPreferences.getInstance();
+    final payload = profiles
+        .map((profile) {
+          final map = Map<String, dynamic>.from(profile.toJson());
+          map['apiKey'] = _encodeApiKey(profile.apiKey);
+          return map;
+        })
+        .toList(growable: false);
+    await prefs.setString(_apiProfilesKey, jsonEncode(payload));
   }
 
   Future<int?> loadLastSessionId() async {

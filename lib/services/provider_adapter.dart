@@ -318,6 +318,26 @@ ProviderAdapter resolveProviderAdapter(String providerId) {
   }
 }
 
+ProviderAdapter resolvePreferredImageAdapter(ApiConfig config) {
+  if (config.providerId == ApiConfig.providerGptImage2 ||
+      _looksLikeOfficialImageModel(config.model)) {
+    return GptImage2Adapter();
+  }
+  return resolveProviderAdapter(config.providerId);
+}
+
+bool _looksLikeOfficialImageModel(String model) {
+  final lower = model.trim().toLowerCase();
+  return lower == 'gpt-image-2' ||
+      lower == 'gpt-image-2-edit' ||
+      lower == 'gpt-image-1.5' ||
+      lower == 'gpt-image-1' ||
+      lower == 'gpt-image-1-mini' ||
+      lower == 'chatgpt-image-latest' ||
+      lower == 'dall-e-2' ||
+      lower == 'dall-e-3';
+}
+
 class GptImage2Adapter implements ProviderAdapter {
   @override
   String get id => ApiConfig.providerGptImage2;

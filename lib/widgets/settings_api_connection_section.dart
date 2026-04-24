@@ -4,6 +4,13 @@ class SettingsApiConnectionSection extends StatelessWidget {
   const SettingsApiConnectionSection({
     super.key,
     required this.title,
+    required this.profileLabel,
+    required this.profileHint,
+    required this.profileItems,
+    required this.selectedProfileId,
+    required this.saveProfileLabel,
+    required this.updateProfileLabel,
+    required this.deleteProfileLabel,
     required this.baseUrlController,
     required this.apiKeyController,
     required this.apiUserIdController,
@@ -21,12 +28,23 @@ class SettingsApiConnectionSection extends StatelessWidget {
     required this.onBaseUrlChanged,
     required this.onApiKeyChanged,
     required this.onApiUserIdChanged,
+    required this.onProfileChanged,
+    required this.onSaveProfile,
+    required this.onUpdateProfile,
+    required this.onDeleteProfile,
     required this.onToggleObscured,
     required this.onTestConnection,
     required this.onViewResult,
   });
 
   final String title;
+  final String profileLabel;
+  final String profileHint;
+  final List<DropdownMenuItem<String>> profileItems;
+  final String? selectedProfileId;
+  final String saveProfileLabel;
+  final String updateProfileLabel;
+  final String deleteProfileLabel;
   final TextEditingController baseUrlController;
   final TextEditingController apiKeyController;
   final TextEditingController apiUserIdController;
@@ -44,6 +62,10 @@ class SettingsApiConnectionSection extends StatelessWidget {
   final ValueChanged<String> onBaseUrlChanged;
   final ValueChanged<String> onApiKeyChanged;
   final ValueChanged<String> onApiUserIdChanged;
+  final ValueChanged<String?> onProfileChanged;
+  final VoidCallback onSaveProfile;
+  final VoidCallback onUpdateProfile;
+  final VoidCallback onDeleteProfile;
   final VoidCallback onToggleObscured;
   final VoidCallback onTestConnection;
   final VoidCallback onViewResult;
@@ -62,6 +84,40 @@ class SettingsApiConnectionSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: selectedProfileId,
+          decoration: InputDecoration(
+            labelText: profileLabel,
+            helperText: profileHint,
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.storage_rounded),
+          ),
+          items: profileItems,
+          onChanged: onProfileChanged,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: onSaveProfile,
+              icon: const Icon(Icons.bookmark_add_outlined),
+              label: Text(saveProfileLabel),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: selectedProfileId == null ? null : onUpdateProfile,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(updateProfileLabel),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: selectedProfileId == null ? null : onDeleteProfile,
+              icon: const Icon(Icons.delete_outline),
+              label: Text(deleteProfileLabel),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
         TextField(
           controller: baseUrlController,
           decoration: InputDecoration(

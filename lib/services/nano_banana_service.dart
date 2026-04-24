@@ -331,11 +331,12 @@ class NanoBananaService {
 
     log.writeln('--- 步骤2: 测试生图端点 ---');
     try {
-      final adapter = resolveProviderAdapter(_config.providerId);
+      final adapter = resolvePreferredImageAdapter(_config);
       final apiUrl = adapter.imageGenerationPath(_config);
       final timeout = _requestTimeoutDuration();
 
       log.writeln('步骤 URL: $apiUrl');
+      log.writeln('适配器: ${adapter.id}');
       log.writeln('请求超时: ${timeout.inSeconds} 秒');
 
       final response = await _dio.post(
@@ -432,18 +433,28 @@ class NanoBananaService {
     String? idempotencyKey,
     int degradeLevel = 0,
   }) async {
-    final adapter = resolveProviderAdapter(_config.providerId);
+    final adapter = resolvePreferredImageAdapter(_config);
+    final autoPromotedOfficialAdapter =
+        adapter.id == ApiConfig.providerGptImage2 &&
+        _config.providerId != ApiConfig.providerGptImage2;
 
     // 如果 Provider 支持 multipart image edits，使用专门的 edits 端点
     if (adapter.supportsMultipartImageEdits) {
-      return _generateMultipartImageEdits(
+      final officialAttempt = await _generateMultipartImageEdits(
         prompt: prompt,
         referenceImages: referenceImages,
         timeout: timeout,
         cancelToken: cancelToken,
         idempotencyKey: idempotencyKey,
         degradeLevel: degradeLevel,
+        adapterOverride: adapter,
       );
+      if (officialAttempt.success ||
+          cancelToken?.isCancelled == true ||
+          !autoPromotedOfficialAdapter ||
+          !_shouldFallbackToLegacyReferenceFlow(officialAttempt)) {
+        return officialAttempt;
+      }
     }
 
     // 原有的 NanoBanana 兼容方式（JSON + base64）
@@ -519,6 +530,7 @@ class NanoBananaService {
     CancelToken? cancelToken,
     String? idempotencyKey,
     int degradeLevel = 0,
+    ProviderAdapter? adapterOverride,
   }) async {
     if (!_config.isValid) {
       return GenerationResult.error(
@@ -533,7 +545,7 @@ class NanoBananaService {
       );
     }
 
-    final adapter = resolveProviderAdapter(_config.providerId);
+    final adapter = adapterOverride ?? resolvePreferredImageAdapter(_config);
     if (!adapter.supportsMultipartImageEdits) {
       return GenerationResult.error(
         '当前 Provider 不支持 multipart image edits',
@@ -581,6 +593,7 @@ class NanoBananaService {
     debugInfo.writeln('========== Multipart Image Edits 请求调试 ==========');
     debugInfo.writeln('URL: $editsUrl');
     debugInfo.writeln('Provider: ${_config.providerId}');
+    debugInfo.writeln('Adapter: ${adapter.id}');
     debugInfo.writeln('Model: ${_config.model}');
     debugInfo.writeln('Prompt: $prompt');
     debugInfo.writeln('图片数量: ${preparedImages.length}');
@@ -656,7 +669,7 @@ class NanoBananaService {
       );
     }
 
-    final adapter = resolveProviderAdapter(_config.providerId);
+    final adapter = resolvePreferredImageAdapter(_config);
     final url = adapter.imageGenerationPath(_config);
     final body = adapter.buildImageRequest(
       config: _config,
@@ -669,6 +682,7 @@ class NanoBananaService {
     debugInfo.writeln('URL: $url');
     debugInfo.writeln('请求方法: POST');
     debugInfo.writeln('Provider: ${_config.providerId}');
+    debugInfo.writeln('Adapter: ${adapter.id}');
     debugInfo.writeln('请求头:');
     debugInfo.writeln('  Content-Type: application/json');
     debugInfo.writeln('  Authorization: Bearer ${_maskApiKey(_config.apiKey)}');
@@ -759,6 +773,27 @@ class NanoBananaService {
         message.contains('format') ||
         message.contains('unsupported') ||
         message.contains('invalid');
+  }
+
+  bool _shouldFallbackToLegacyReferenceFlow(GenerationResult result) {
+    final code = (result.errorCode ?? '').toLowerCase();
+    if (code == 'cancelled') return false;
+    if (code == 'http_404' ||
+        code == 'http_405' ||
+        code == 'http_501' ||
+        code == 'not_supported' ||
+        code == 'no_edits_endpoint' ||
+        code == 'build_formdata_failed') {
+      return true;
+    }
+
+    final message = (result.errorMessage ?? '').toLowerCase();
+    return message.contains('not found') ||
+        message.contains('method not allowed') ||
+        message.contains('unsupported') ||
+        message.contains('not support') ||
+        message.contains('未配置') ||
+        message.contains('不支持');
   }
 
   List<Uint8List> _prepareReferenceImages(

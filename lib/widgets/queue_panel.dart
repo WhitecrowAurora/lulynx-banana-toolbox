@@ -1,6 +1,4 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-
 import '../models/generation_queue_task.dart';
 import '../services/haptic_service.dart';
 
@@ -42,7 +40,7 @@ class QueuePanel extends StatelessWidget {
 
   void _hapticLight() {
     if (hapticFeedbackEnabled) {
-      HapticFeedback.lightImpact();
+      HapticService.light();
     }
   }
 

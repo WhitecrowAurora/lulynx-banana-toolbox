@@ -13,6 +13,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../l10n/app_i18n.dart';
 import '../models/api_config.dart';
+import '../models/api_profile.dart';
 import '../models/usage_stats.dart';
 import '../providers/providers.dart';
 import '../services/diagnostic_service.dart';
@@ -72,11 +73,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _ignoringBatteryOptimizations = false;
   bool _isBusyWithDiagnostics = false;
   List<Map<String, String>> _remoteModelItems = const [];
+  List<ApiProfile> _apiProfiles = const [];
   bool _isLoadingModels = false;
   String? _modelLoadError;
   DateTime? _modelListUpdatedAt;
   String _modelListConfigKey = '';
-  String _appVersionLabel = 'v1.6.7';
+  String _appVersionLabel = 'v1.6.9';
   bool _isCheckingUpdate = false;
   bool _isDownloadingUpdate = false;
   String? _updateStatus;
@@ -95,6 +97,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _apiUserIdController = TextEditingController();
     _refreshStorageStats();
     _refreshBatteryOptimizationStatus();
+    unawaited(_loadApiProfiles());
     unawaited(_loadPackageVersion());
   }
 
@@ -120,6 +123,180 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _modelConfigKey(ApiConfig config) {
     return '${config.baseUrl.trim()}|${config.apiKey.trim()}|${config.providerId.trim()}';
+  }
+
+  Future<void> _loadApiProfiles() async {
+    final profiles = await ref.read(storageServiceProvider).loadApiProfiles();
+    if (!mounted) return;
+    setState(() {
+      _apiProfiles = profiles;
+    });
+  }
+
+  String? _matchingApiProfileId(ApiConfig config) {
+    for (final profile in _apiProfiles) {
+      if (profile.baseUrl.trim() == config.baseUrl.trim() &&
+          profile.apiKey.trim() == config.apiKey.trim() &&
+          profile.apiUserId.trim() == config.apiUserId.trim() &&
+          profile.providerId.trim() == config.providerId.trim() &&
+          profile.model.trim() == config.model.trim()) {
+        return profile.id;
+      }
+    }
+    return null;
+  }
+
+  String _suggestApiProfileName(ApiConfig config) {
+    final base = config.baseUrl.trim();
+    if (base.isEmpty) return _tr('未命名站点');
+    final uri = Uri.tryParse(base);
+    final host = uri?.host.trim() ?? '';
+    if (host.isNotEmpty) return host;
+    return base;
+  }
+
+  Future<String?> _promptApiProfileName({required String initialValue}) async {
+    final controller = TextEditingController(text: initialValue);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_tr('保存 API 站点')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          decoration: InputDecoration(
+            labelText: _tr('站点名称'),
+            hintText: _tr('例如：主站 / 备用站 / 海外站'),
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(_tr('取消')),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: Text(_tr('保存')),
+          ),
+        ],
+      ),
+    );
+    return result?.trim();
+  }
+
+  Future<void> _saveCurrentApiProfile(ApiConfig config) async {
+    final notifier = ref.read(apiConfigProvider.notifier);
+    if (!config.isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_tr('请先填写 API 端点和 Key'))),
+      );
+      return;
+    }
+    final name = await _promptApiProfileName(
+      initialValue: _suggestApiProfileName(config),
+    );
+    if (!mounted || name == null || name.isEmpty) return;
+
+    final profile = ApiProfile.fromConfig(
+      config,
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+    );
+    final updated = [..._apiProfiles, profile];
+    await ref.read(storageServiceProvider).saveApiProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _apiProfiles = updated;
+    });
+    await notifier.updateConfig(profile.applyTo(config));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_tr('已保存 API 站点 {name}', args: {'name': profile.displayName}))),
+    );
+  }
+
+  Future<void> _applyApiProfile(ApiConfig config, String? profileId) async {
+    if (profileId == null) return;
+    ApiProfile? profile;
+    for (final item in _apiProfiles) {
+      if (item.id == profileId) {
+        profile = item;
+        break;
+      }
+    }
+    if (profile == null) return;
+    await ref.read(apiConfigProvider.notifier).updateConfig(profile.applyTo(config));
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_tr('已切换到 API 站点 {name}', args: {'name': profile.displayName}))),
+    );
+  }
+
+  Future<void> _updateApiProfile(ApiConfig config, String? profileId) async {
+    if (profileId == null) return;
+    final index = _apiProfiles.indexWhere((item) => item.id == profileId);
+    if (index < 0) return;
+    final existing = _apiProfiles[index];
+    final updatedProfile = ApiProfile.fromConfig(
+      config,
+      id: existing.id,
+      name: existing.name,
+    );
+    final updated = [..._apiProfiles]..[index] = updatedProfile;
+    await ref.read(storageServiceProvider).saveApiProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _apiProfiles = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr('已更新 API 站点 {name}', args: {'name': updatedProfile.displayName}),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteApiProfile(String? profileId) async {
+    if (profileId == null) return;
+    final index = _apiProfiles.indexWhere((item) => item.id == profileId);
+    if (index < 0) return;
+    final profile = _apiProfiles[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_tr('删除 API 站点')),
+        content: Text(
+          _tr('确定删除 API 站点 {name} 吗？', args: {'name': profile.displayName}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_tr('取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_tr('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final updated = [..._apiProfiles]..removeAt(index);
+    await ref.read(storageServiceProvider).saveApiProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _apiProfiles = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_tr('已删除 API 站点 {name}', args: {'name': profile.displayName}))),
+    );
   }
 
   String _formatDateTimeShort(DateTime value) {
@@ -1218,6 +1395,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(backupServiceProvider).restoreFromFile(filePath);
     final config = await ref.read(storageServiceProvider).loadConfig();
     await ref.read(apiConfigProvider.notifier).updateConfig(config);
+    await _loadApiProfiles();
     await ref.read(sessionsProvider.notifier).loadSessions();
     ref.read(currentSessionIdProvider.notifier).state = null;
     await ref.read(storageServiceProvider).saveLastSessionId(null);
@@ -1241,6 +1419,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _ensurePreviewUpToDate(config);
     _ensureModelListUpToDate(config);
     final modelItems = _effectiveModelItems(config);
+    final selectedApiProfileId = _matchingApiProfileId(config);
     final selectedModelValue =
         modelItems.any((m) => m['id'] == config.model) ? config.model : null;
 
@@ -1282,6 +1461,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SettingsApiConnectionSection(
             title: tr('API 配置'),
+            profileLabel: tr('API 站点列表'),
+            profileHint: tr('保存并切换不同 API 站点配置'),
+            profileItems: [
+              DropdownMenuItem<String>(
+                value: null,
+                child: Text(tr('当前未绑定配置档')),
+              ),
+              ..._apiProfiles.map((profile) {
+                return DropdownMenuItem<String>(
+                  value: profile.id,
+                  child: Text(profile.displayName),
+                );
+              }),
+            ],
+            selectedProfileId: selectedApiProfileId,
+            saveProfileLabel: tr('保存当前'),
+            updateProfileLabel: tr('更新当前'),
+            deleteProfileLabel: tr('删除当前'),
             baseUrlController: _baseUrlController,
             apiKeyController: _apiKeyController,
             apiUserIdController: _apiUserIdController,
@@ -1299,6 +1496,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onBaseUrlChanged: (value) => notifier.setBaseUrl(value.trim()),
             onApiKeyChanged: (value) => notifier.setApiKey(value.trim()),
             onApiUserIdChanged: (value) => notifier.setApiUserId(value.trim()),
+            onProfileChanged: (value) => _applyApiProfile(config, value),
+            onSaveProfile: () => _saveCurrentApiProfile(config),
+            onUpdateProfile: () => _updateApiProfile(config, selectedApiProfileId),
+            onDeleteProfile: () => _deleteApiProfile(selectedApiProfileId),
             onToggleObscured: () {
               setState(() => _obscureApiKey = !_obscureApiKey);
             },

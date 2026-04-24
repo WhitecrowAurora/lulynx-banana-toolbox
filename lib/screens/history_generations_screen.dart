@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../l10n/app_i18n.dart';
 import '../models/chat_models.dart';
 import '../providers/providers.dart';
+import '../services/haptic_service.dart';
 import '../services/share_service.dart';
 
 class HistoryGenerationsScreen extends ConsumerStatefulWidget {
@@ -29,7 +30,7 @@ class _HistoryGenerationsScreenState extends ConsumerState<HistoryGenerationsScr
       _isSelectionMode = true;
       _selectedItems.add(initialId);
     });
-    HapticFeedback.lightImpact();
+    HapticService.light();
   }
 
   void _exitSelectionMode() {
@@ -50,21 +51,21 @@ class _HistoryGenerationsScreenState extends ConsumerState<HistoryGenerationsScr
         _selectedItems.add(id);
       }
     });
-    HapticFeedback.lightImpact();
+    HapticService.light();
   }
 
   void _selectAll(List<HistoryGenerationItem> items) {
     setState(() {
       _selectedItems.addAll(items.map((e) => e.messageId));
     });
-    HapticFeedback.mediumImpact();
+    HapticService.medium();
   }
 
   Future<void> _shareSelected(List<HistoryGenerationItem> items) async {
     if (_selectedItems.isEmpty) return;
     final selectedItems = items.where((e) => _selectedItems.contains(e.messageId)).toList();
 
-    HapticFeedback.mediumImpact();
+    HapticService.medium();
     final config = ref.read(apiConfigProvider);
 
     var successCount = 0;
