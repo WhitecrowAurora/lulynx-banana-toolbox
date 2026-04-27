@@ -1,20 +1,14 @@
 import 'api_config.dart';
 
-class ApiProfile {
+class ModelProfile {
   final String id;
   final String name;
-  final String baseUrl;
-  final String apiKey;
-  final String apiUserId;
   final String providerId;
   final String model;
 
-  const ApiProfile({
+  const ModelProfile({
     required this.id,
     required this.name,
-    required this.baseUrl,
-    required this.apiKey,
-    required this.apiUserId,
     required this.providerId,
     required this.model,
   });
@@ -22,26 +16,20 @@ class ApiProfile {
   String get displayName {
     final trimmed = name.trim();
     if (trimmed.isNotEmpty) return trimmed;
-    final base = baseUrl.trim();
-    if (base.isNotEmpty) return base;
+    final modelName = model.trim();
+    if (modelName.isNotEmpty) return modelName;
     return id;
   }
 
-  ApiProfile copyWith({
+  ModelProfile copyWith({
     String? id,
     String? name,
-    String? baseUrl,
-    String? apiKey,
-    String? apiUserId,
     String? providerId,
     String? model,
   }) {
-    return ApiProfile(
+    return ModelProfile(
       id: id ?? this.id,
       name: name ?? this.name,
-      baseUrl: baseUrl ?? this.baseUrl,
-      apiKey: apiKey ?? this.apiKey,
-      apiUserId: apiUserId ?? this.apiUserId,
       providerId: providerId ?? this.providerId,
       model: model ?? this.model,
     );
@@ -49,46 +37,37 @@ class ApiProfile {
 
   ApiConfig applyTo(ApiConfig config) {
     return config.copyWith(
-      baseUrl: baseUrl,
-      apiKey: apiKey,
-      apiUserId: apiUserId,
+      providerId: providerId,
+      model: model,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
-        'baseUrl': baseUrl,
-        'apiKey': apiKey,
-        'apiUserId': apiUserId,
         'providerId': providerId,
         'model': model,
       };
 
-  factory ApiProfile.fromJson(Map<String, dynamic> json) {
-    return ApiProfile(
+  factory ModelProfile.fromJson(Map<String, dynamic> json) {
+    return ModelProfile(
       id: json['id']?.toString().trim() ?? '',
       name: json['name']?.toString() ?? '',
-      baseUrl: json['baseUrl']?.toString() ?? '',
-      apiKey: json['apiKey']?.toString() ?? '',
-      apiUserId: json['apiUserId']?.toString() ?? '',
       providerId:
-          json['providerId']?.toString() ?? ApiConfig.providerNanoBananaCompatible,
+          json['providerId']?.toString() ??
+          ApiConfig.providerNanoBananaCompatible,
       model: json['model']?.toString() ?? 'nano-banana',
     );
   }
 
-  factory ApiProfile.fromConfig(
+  factory ModelProfile.fromConfig(
     ApiConfig config, {
     required String id,
     required String name,
   }) {
-    return ApiProfile(
+    return ModelProfile(
       id: id,
       name: name,
-      baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
-      apiUserId: config.apiUserId,
       providerId: config.providerId,
       model: config.model,
     );

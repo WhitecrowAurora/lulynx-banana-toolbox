@@ -4,6 +4,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import '../models/api_config.dart';
 import '../models/api_profile.dart';
+import '../models/model_profile.dart';
 import 'chat_database_service.dart';
 import 'storage_service.dart';
 
@@ -29,12 +30,14 @@ class BackupService {
   Future<String> createBackupFile() async {
     final config = await _storage.loadConfig();
     final apiProfiles = await _storage.loadApiProfiles();
+    final modelProfiles = await _storage.loadModelProfiles();
     final chatData = await _db.exportData();
     final data = {
       'schema': 1,
       'created_at': DateTime.now().toIso8601String(),
       'config': config.toJson(),
       'api_profiles': apiProfiles.map((profile) => profile.toJson()).toList(),
+      'model_profiles': modelProfiles.map((profile) => profile.toJson()).toList(),
       'chat': chatData,
     };
 
@@ -64,6 +67,16 @@ class BackupService {
         profiles.add(ApiProfile.fromJson(Map<String, dynamic>.from(item)));
       }
       await _storage.saveApiProfiles(profiles);
+    }
+
+    final rawModelProfiles = data['model_profiles'];
+    if (rawModelProfiles is List) {
+      final profiles = <ModelProfile>[];
+      for (final item in rawModelProfiles) {
+        if (item is! Map) continue;
+        profiles.add(ModelProfile.fromJson(Map<String, dynamic>.from(item)));
+      }
+      await _storage.saveModelProfiles(profiles);
     }
 
     final chat = Map<String, dynamic>.from(data['chat'] as Map? ?? {});

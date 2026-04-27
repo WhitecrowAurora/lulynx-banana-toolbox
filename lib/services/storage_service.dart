@@ -6,10 +6,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/api_config.dart';
 import '../models/api_profile.dart';
 import '../models/generation_queue_task.dart';
+import '../models/model_profile.dart';
 
 class StorageService {
   static const _configKey = 'api_config';
   static const _apiProfilesKey = 'api_profiles_v1';
+  static const _modelProfilesKey = 'model_profiles_v1';
   static const _lastSessionIdKey = 'last_session_id';
   static const _apiKeyEncodeMarker = 'v1:';
   static const _apiKeyObfuscationSeed = 'nano_banana_local_seed_2026';
@@ -98,6 +100,34 @@ class StorageService {
         })
         .toList(growable: false);
     await prefs.setString(_apiProfilesKey, jsonEncode(payload));
+  }
+
+  Future<List<ModelProfile>> loadModelProfiles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_modelProfilesKey);
+    if (raw == null || raw.trim().isEmpty) return const <ModelProfile>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <ModelProfile>[];
+      final profiles = <ModelProfile>[];
+      for (final item in decoded) {
+        if (item is! Map) continue;
+        final profile = ModelProfile.fromJson(Map<String, dynamic>.from(item));
+        if (profile.id.trim().isEmpty) continue;
+        profiles.add(profile);
+      }
+      return profiles;
+    } catch (_) {
+      return const <ModelProfile>[];
+    }
+  }
+
+  Future<void> saveModelProfiles(List<ModelProfile> profiles) async {
+    final prefs = await SharedPreferences.getInstance();
+    final payload = profiles
+        .map((profile) => profile.toJson())
+        .toList(growable: false);
+    await prefs.setString(_modelProfilesKey, jsonEncode(payload));
   }
 
   Future<int?> loadLastSessionId() async {

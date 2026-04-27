@@ -4,6 +4,13 @@ class SettingsProviderModelSection extends StatelessWidget {
   const SettingsProviderModelSection({
     super.key,
     required this.title,
+    required this.groupLabel,
+    required this.groupHint,
+    required this.groupItems,
+    required this.selectedGroupId,
+    required this.saveGroupLabel,
+    required this.updateGroupLabel,
+    required this.deleteGroupLabel,
     required this.providerValue,
     required this.providerItems,
     required this.modelValue,
@@ -14,12 +21,23 @@ class SettingsProviderModelSection extends StatelessWidget {
     required this.modelLoadError,
     required this.isLoadingModels,
     required this.refreshModelsLabel,
+    required this.onGroupChanged,
+    required this.onSaveGroup,
+    required this.onUpdateGroup,
+    required this.onDeleteGroup,
     required this.onProviderChanged,
     required this.onModelChanged,
     required this.onRefreshModels,
   });
 
   final String title;
+  final String groupLabel;
+  final String groupHint;
+  final List<DropdownMenuItem<String>> groupItems;
+  final String? selectedGroupId;
+  final String saveGroupLabel;
+  final String updateGroupLabel;
+  final String deleteGroupLabel;
   final String providerValue;
   final List<DropdownMenuItem<String>> providerItems;
   final String? modelValue;
@@ -30,6 +48,10 @@ class SettingsProviderModelSection extends StatelessWidget {
   final String? modelLoadError;
   final bool isLoadingModels;
   final String refreshModelsLabel;
+  final ValueChanged<String?> onGroupChanged;
+  final VoidCallback onSaveGroup;
+  final VoidCallback onUpdateGroup;
+  final VoidCallback onDeleteGroup;
   final ValueChanged<String> onProviderChanged;
   final ValueChanged<String> onModelChanged;
   final VoidCallback onRefreshModels;
@@ -48,6 +70,40 @@ class SettingsProviderModelSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: selectedGroupId,
+          decoration: InputDecoration(
+            labelText: groupLabel,
+            helperText: groupHint,
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.category_outlined),
+          ),
+          items: groupItems,
+          onChanged: onGroupChanged,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: onSaveGroup,
+              icon: const Icon(Icons.bookmark_add_outlined),
+              label: Text(saveGroupLabel),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: selectedGroupId == null ? null : onUpdateGroup,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(updateGroupLabel),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: selectedGroupId == null ? null : onDeleteGroup,
+              icon: const Icon(Icons.delete_outline),
+              label: Text(deleteGroupLabel),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
         DropdownButtonFormField<String>(
           value: providerValue,
           decoration: const InputDecoration(

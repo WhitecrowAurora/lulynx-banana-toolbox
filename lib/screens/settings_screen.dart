@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import '../l10n/app_i18n.dart';
 import '../models/api_config.dart';
 import '../models/api_profile.dart';
+import '../models/model_profile.dart';
 import '../models/usage_stats.dart';
 import '../providers/providers.dart';
 import '../services/diagnostic_service.dart';
@@ -74,6 +75,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isBusyWithDiagnostics = false;
   List<Map<String, String>> _remoteModelItems = const [];
   List<ApiProfile> _apiProfiles = const [];
+  List<ModelProfile> _modelProfiles = const [];
   bool _isLoadingModels = false;
   String? _modelLoadError;
   DateTime? _modelListUpdatedAt;
@@ -98,6 +100,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _refreshStorageStats();
     _refreshBatteryOptimizationStatus();
     unawaited(_loadApiProfiles());
+    unawaited(_loadModelProfiles());
     unawaited(_loadPackageVersion());
   }
 
@@ -133,12 +136,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
+  Future<void> _loadModelProfiles() async {
+    final profiles = await ref.read(storageServiceProvider).loadModelProfiles();
+    if (!mounted) return;
+    setState(() {
+      _modelProfiles = profiles;
+    });
+  }
+
   String? _matchingApiProfileId(ApiConfig config) {
     for (final profile in _apiProfiles) {
       if (profile.baseUrl.trim() == config.baseUrl.trim() &&
           profile.apiKey.trim() == config.apiKey.trim() &&
-          profile.apiUserId.trim() == config.apiUserId.trim() &&
-          profile.providerId.trim() == config.providerId.trim() &&
+          profile.apiUserId.trim() == config.apiUserId.trim()) {
+        return profile.id;
+      }
+    }
+    return null;
+  }
+
+  String? _matchingModelProfileId(ApiConfig config) {
+    for (final profile in _modelProfiles) {
+      if (profile.providerId.trim() == config.providerId.trim() &&
           profile.model.trim() == config.model.trim()) {
         return profile.id;
       }
@@ -155,6 +174,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return base;
   }
 
+  String _providerDisplayName(String providerId) {
+    for (final provider in ApiConfig.availableProviders) {
+      if ((provider['id'] ?? '').trim() == providerId.trim()) {
+        return provider['name']?.trim() ?? providerId;
+      }
+    }
+    return providerId;
+  }
+
+  String _suggestModelProfileName(ApiConfig config) {
+    final model = config.model.trim();
+    final provider = _providerDisplayName(config.providerId).trim();
+    if (model.isEmpty && provider.isEmpty) return _tr('未命名模型分组');
+    if (model.isEmpty) return provider;
+    if (provider.isEmpty) return model;
+    return '$model @ $provider';
+  }
+
   Future<String?> _promptApiProfileName({required String initialValue}) async {
     final controller = TextEditingController(text: initialValue);
     final result = await showDialog<String>(
@@ -168,6 +205,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           decoration: InputDecoration(
             labelText: _tr('站点名称'),
             hintText: _tr('例如：主站 / 备用站 / 海外站'),
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(_tr('取消')),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: Text(_tr('保存')),
+          ),
+        ],
+      ),
+    );
+    return result?.trim();
+  }
+
+  Future<String?> _promptModelProfileName({required String initialValue}) async {
+    final controller = TextEditingController(text: initialValue);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_tr('保存模型分组')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          decoration: InputDecoration(
+            labelText: _tr('分组名称'),
+            hintText: _tr('例如：主力生图 / 图生图 / GPT-Image'),
             border: const OutlineInputBorder(),
           ),
           onSubmitted: (value) =>
@@ -296,6 +367,119 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(_tr('已删除 API 站点 {name}', args: {'name': profile.displayName}))),
+    );
+  }
+
+  Future<void> _saveCurrentModelProfile(ApiConfig config) async {
+    final name = await _promptModelProfileName(
+      initialValue: _suggestModelProfileName(config),
+    );
+    if (!mounted || name == null || name.isEmpty) return;
+
+    final profile = ModelProfile.fromConfig(
+      config,
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+    );
+    final updated = [..._modelProfiles, profile];
+    await ref.read(storageServiceProvider).saveModelProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _modelProfiles = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr('已保存模型分组 {name}', args: {'name': profile.displayName}),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _applyModelProfile(ApiConfig config, String? profileId) async {
+    if (profileId == null) return;
+    ModelProfile? profile;
+    for (final item in _modelProfiles) {
+      if (item.id == profileId) {
+        profile = item;
+        break;
+      }
+    }
+    if (profile == null) return;
+    await ref.read(apiConfigProvider.notifier).updateConfig(profile.applyTo(config));
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr('已切换到模型分组 {name}', args: {'name': profile.displayName}),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _updateModelProfile(ApiConfig config, String? profileId) async {
+    if (profileId == null) return;
+    final index = _modelProfiles.indexWhere((item) => item.id == profileId);
+    if (index < 0) return;
+    final existing = _modelProfiles[index];
+    final updatedProfile = ModelProfile.fromConfig(
+      config,
+      id: existing.id,
+      name: existing.name,
+    );
+    final updated = [..._modelProfiles]..[index] = updatedProfile;
+    await ref.read(storageServiceProvider).saveModelProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _modelProfiles = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr('已更新模型分组 {name}', args: {'name': updatedProfile.displayName}),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteModelProfile(String? profileId) async {
+    if (profileId == null) return;
+    final index = _modelProfiles.indexWhere((item) => item.id == profileId);
+    if (index < 0) return;
+    final profile = _modelProfiles[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_tr('删除模型分组')),
+        content: Text(
+          _tr('确定删除模型分组 {name} 吗？', args: {'name': profile.displayName}),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_tr('取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_tr('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final updated = [..._modelProfiles]..removeAt(index);
+    await ref.read(storageServiceProvider).saveModelProfiles(updated);
+    if (!mounted) return;
+    setState(() {
+      _modelProfiles = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _tr('已删除模型分组 {name}', args: {'name': profile.displayName}),
+        ),
+      ),
     );
   }
 
@@ -1396,6 +1580,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final config = await ref.read(storageServiceProvider).loadConfig();
     await ref.read(apiConfigProvider.notifier).updateConfig(config);
     await _loadApiProfiles();
+    await _loadModelProfiles();
     await ref.read(sessionsProvider.notifier).loadSessions();
     ref.read(currentSessionIdProvider.notifier).state = null;
     await ref.read(storageServiceProvider).saveLastSessionId(null);
@@ -1420,6 +1605,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _ensureModelListUpToDate(config);
     final modelItems = _effectiveModelItems(config);
     final selectedApiProfileId = _matchingApiProfileId(config);
+    final selectedModelProfileId = _matchingModelProfileId(config);
     final selectedModelValue =
         modelItems.any((m) => m['id'] == config.model) ? config.model : null;
 
@@ -1461,12 +1647,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SettingsApiConnectionSection(
             title: tr('API 配置'),
-            profileLabel: tr('API 站点列表'),
+            profileLabel: tr('API 站点分组'),
             profileHint: tr('保存并切换不同 API 站点配置'),
             profileItems: [
               DropdownMenuItem<String>(
                 value: null,
-                child: Text(tr('当前未绑定配置档')),
+                child: Text(tr('当前未绑定站点分组')),
               ),
               ..._apiProfiles.map((profile) {
                 return DropdownMenuItem<String>(
@@ -1509,6 +1695,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 24),
           SettingsProviderModelSection(
             title: tr('Provider & Model'),
+            groupLabel: tr('模型分组'),
+            groupHint: tr('保存并切换不同 Provider / Model 组合'),
+            groupItems: [
+              DropdownMenuItem<String>(
+                value: null,
+                child: Text(tr('当前未绑定模型分组')),
+              ),
+              ..._modelProfiles.map((profile) {
+                return DropdownMenuItem<String>(
+                  value: profile.id,
+                  child: Text(profile.displayName),
+                );
+              }),
+            ],
+            selectedGroupId: selectedModelProfileId,
+            saveGroupLabel: tr('保存当前模型'),
+            updateGroupLabel: tr('更新当前模型'),
+            deleteGroupLabel: tr('删除当前模型'),
             providerValue: config.providerId,
             providerItems: ApiConfig.availableProviders.map((provider) {
               return DropdownMenuItem<String>(
@@ -1540,6 +1744,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             modelLoadError: _modelLoadError,
             isLoadingModels: _isLoadingModels,
             refreshModelsLabel: tr('刷新模型'),
+            onGroupChanged: (value) => _applyModelProfile(config, value),
+            onSaveGroup: () => _saveCurrentModelProfile(config),
+            onUpdateGroup: () => _updateModelProfile(config, selectedModelProfileId),
+            onDeleteGroup: () => _deleteModelProfile(selectedModelProfileId),
             onProviderChanged: notifier.setProviderId,
             onModelChanged: notifier.setModel,
             onRefreshModels: () => _refreshModelList(config, manual: true),
